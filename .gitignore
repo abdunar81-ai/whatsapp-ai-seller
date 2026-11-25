@@ -1,0 +1,8 @@
+node_modules/
+dist/
+.env
+# WhatsApp session credentials (Baileys) — never commit
+auth/
+data/orders.json
+*.log
+waha-sessions/

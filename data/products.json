@@ -1,0 +1,26 @@
+[
+  {
+    "id": "tshirt-basic",
+    "name": "Basic Cotton T-Shirt",
+    "description": "100% cotton, regular fit. Colors: white, black, navy.",
+    "price": 15,
+    "stock": 120,
+    "options": { "size": ["S", "M", "L", "XL"], "color": ["white", "black", "navy"] }
+  },
+  {
+    "id": "hoodie-zip",
+    "name": "Zip Hoodie",
+    "description": "Fleece-lined zip hoodie with two pockets.",
+    "price": 39,
+    "stock": 40,
+    "options": { "size": ["M", "L", "XL"], "color": ["grey", "black"] }
+  },
+  {
+    "id": "cap-classic",
+    "name": "Classic Cap",
+    "description": "Adjustable baseball cap, one size.",
+    "price": 12,
+    "stock": 0,
+    "options": { "color": ["black", "beige"] }
+  }
+]
