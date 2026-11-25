@@ -1,20 +1,20 @@
 # WhatsApp AI Seller
 
-A WhatsApp sales bot with its own server. Customers chat with your WhatsApp number; **Claude** (Anthropic API) answers as a sales assistant: it looks up products, recommends, collects the order details, confirms, and places the order.
+A WhatsApp sales bot for **GLUCOSE** (ҰБТ prep courses) with its own server. Students write to the WhatsApp number; **Claude** (Anthropic API) answers as the sales manager, following the sales script in `data/script.md`: greets, asks name/subjects/grade, finds out their goals, presents the course and price, and closes on payment or a parent call. Every lead is saved to `data/leads.json`.
 
 ## How it works
 
 ```
 WhatsApp customer ──► WhatsApp connector (Baileys or WAHA) ──► Express server ──► Claude (tool use)
-                                                                                    ├─ search_products
-                                                                                    ├─ create_order
+                                                                                    ├─ save_lead
                                                                                     └─ request_human
 ```
 
 - `src/whatsapp/waha.ts` – **default.** A [WAHA](https://waha.devlike.pro) container holds the WhatsApp session (NOWEB engine, no browser) and posts messages to `/webhooks/waha`.
 - `src/whatsapp/baileys.ts` – alternative: runs WhatsApp Web inside the Node process (session saved in `auth/`).
-- `src/ai/seller.ts` – the seller: system prompt, tools, and per-chat conversation memory.
-- `src/store/catalog.ts` – products from `data/products.json`, orders saved to `data/orders.json`.
+- `data/script.md` – **the sales script and course facts** (Kazakh). Edit it to change what the bot says, then restart the bot.
+- `src/ai/seller.ts` – the seller: instructions around the script, tools, and per-chat conversation memory.
+- `src/store/leads.ts` – the lead list (`data/leads.json`): name, grade, subjects, specialty, target score, parent phone, payment choice, stage.
 
 Pick the connector with `WHATSAPP_PROVIDER=waha|baileys` (default `waha`).
 
@@ -33,7 +33,7 @@ Link the WhatsApp number once:
 
 The login is saved in `waha-sessions/`, so restarts don't need a new scan. Check the bot with `docker compose logs -f bot`.
 
-Edit `data/products.json` with your catalog (it's mounted, so just restart the bot: `docker compose restart bot`). Set `ADMIN_PHONE` to get new-order and handoff alerts on WhatsApp. Customers can send `/reset` to start over.
+Edit `data/script.md` to change the script or prices (it's mounted, so just restart the bot: `docker compose restart bot`). Set `KASPI_PAYMENT_LINK` so the bot can send the payment link, and `ADMIN_PHONE` to get alerts on WhatsApp when a lead is ready to pay, gives a parent's number, or needs a manager. Customers can send `/reset` to start over.
 
 Both ports are bound to `127.0.0.1`, so nothing is exposed to the internet. Never commit `waha-sessions/` or `auth/`: they are a logged-in WhatsApp session.
 

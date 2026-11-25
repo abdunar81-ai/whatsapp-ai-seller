@@ -1,26 +1,38 @@
+import { readFileSync } from "node:fs";
 import Anthropic from "@anthropic-ai/sdk";
 import { betaZodTool } from "@anthropic-ai/sdk/helpers/beta/zod";
 import { z } from "zod/v4";
 import { config } from "../config.js";
-import { createOrder, searchProducts } from "../store/catalog.js";
+import { LEAD_STAGES, upsertLead } from "../store/leads.js";
 
 const client = new Anthropic(); // reads ANTHROPIC_API_KEY
 
+const SCRIPT = readFileSync(config.SCRIPT_FILE, "utf8");
+
+const PAYMENT_STEP = config.KASPI_PAYMENT_LINK
+  ? `When the customer is ready to pay, send this payment link: ${config.KASPI_PAYMENT_LINK}`
+  : "There is no payment link yet: when the customer is ready to pay, set stage ready_to_pay with save_lead and tell them the manager will send the payment link shortly.";
+
 // Keep this text stable (no dates/ids) so prompt caching keeps hitting.
-const SYSTEM_PROMPT = `You are the sales assistant for "${config.STORE_NAME}", chatting with customers on WhatsApp.
+const SYSTEM_PROMPT = `You are the WhatsApp sales manager of an education center. Your sales script and all course facts are below, between <script> tags. Follow it.
 
 How you work:
-- Reply in the customer's language. Keep messages short and friendly, like a real shop assistant on WhatsApp: a few lines, no markdown headings or tables. Use *bold* sparingly (WhatsApp formatting).
-- Always look products up with search_products before quoting a price, stock or option. Never invent products, prices, discounts or delivery promises.
-- Prices are in ${config.STORE_CURRENCY}. If something is out of stock, say so and suggest an alternative.
-- Help the customer choose, then close the sale: confirm items, options (size/color...), quantity, name and delivery address. Read the full order and total back and get an explicit "yes" before calling create_order.
-- After create_order succeeds, share the order id and total.
-- If the customer is angry, asks for a refund, or asks for something you can't do, call request_human and tell them a team member will follow up.
+- Write like a real manager on WhatsApp: short, warm messages, a few lines each, emojis as in the script. WhatsApp formatting only (*bold*); no markdown headings, lists with "-", or tables.
+- Language: Kazakh by default, as in the script. If the customer writes in Russian, answer in Russian.
+- Go through the script steps in order, one step per message, and ask one question at a time. Wait for the answer before moving on. Adapt the wording to what the customer said (their subjects, specialty, goals); don't paste whole blocks they've already seen.
+- If the customer asks something out of order (e.g. the price right away), answer it briefly and steer back to the next step.
+- Only use facts, prices, bonuses and payment terms from the script. Never invent discounts, deadlines, guarantees or features. If you don't know, say a manager will clarify and call request_human.
+- If someone sincerely asks whether they're talking to a bot, say honestly that you are GLUCOSE's AI assistant and a manager can join the chat.
+- Call save_lead whenever you learn something new about the customer (name, grade, subjects, specialty, target score, what matters to them, parent's phone, payment preference) and when the conversation moves to a new stage. Don't mention that you're saving anything.
+- ${PAYMENT_STEP}
+- If the customer gives a parent's phone number for a call, save it (stage parent_call) and say the manager will call.
+- Complaints, refunds, or anything you can't handle: call request_human and tell the customer a manager will reply soon.
 
-Store notes from the owner:
-${config.STORE_NOTES || "(none)"}`;
+<script>
+${SCRIPT}
+</script>`;
 
-const MAX_HISTORY = 30;
+const MAX_HISTORY = 40;
 const histories = new Map<string, Anthropic.Beta.BetaMessageParam[]>();
 
 export interface SellerContext {
@@ -29,56 +41,47 @@ export interface SellerContext {
   notifyHuman: (summary: string) => Promise<void>;
 }
 
+const NOTIFY_STAGES = new Set(["ready_to_pay", "parent_call"]);
+
 function buildTools(ctx: SellerContext) {
   return [
     betaZodTool({
-      name: "search_products",
+      name: "save_lead",
       description:
-        "Search the store catalog. Returns matching products with id, price, stock and options. Use an empty query to list everything.",
+        "Save what you learned about this customer to the CRM. Pass only fields you learned or that changed; earlier values are kept.",
       inputSchema: z.object({
-        query: z.string().describe("Keywords, e.g. 'black hoodie'. Empty string lists all products."),
-      }),
-      run: async ({ query }) => JSON.stringify(await searchProducts(query)),
-    }),
-    betaZodTool({
-      name: "create_order",
-      description:
-        "Place an order. Only call after the customer explicitly confirmed the items, options, quantities, name and address.",
-      inputSchema: z.object({
-        customerName: z.string(),
-        address: z.string(),
-        items: z
-          .array(
-            z.object({
-              productId: z.string(),
-              quantity: z.number().int().positive(),
-              options: z.record(z.string(), z.string()).optional(),
-            }),
-          )
-          .min(1),
+        name: z.string().optional(),
+        grade: z.string().optional().describe("School grade, e.g. '11'"),
+        subjects: z.string().optional().describe("Elective ҰБТ subjects, e.g. 'Био/Хим'"),
+        specialty: z.string().optional().describe("Chosen specialty / university direction"),
+        startedPrep: z.string().optional().describe("Whether and how they already prepare for ҰБТ"),
+        targetScore: z.string().optional(),
+        priorities: z.string().optional().describe("What matters to them in a course"),
+        parentPhone: z.string().optional(),
+        paymentPreference: z.string().optional().describe("Full payment or installments (and months)"),
         notes: z.string().optional(),
+        stage: z.enum(LEAD_STAGES).optional(),
       }),
-      run: async (input) => {
-        try {
-          const order = await createOrder({ chatId: ctx.chatId, ...input });
+      run: async (fields) => {
+        const { before, after } = await upsertLead(ctx.chatId, { whatsappName: ctx.senderName, ...fields });
+        if (fields.stage && NOTIFY_STAGES.has(fields.stage) && before?.stage !== fields.stage) {
           await ctx.notifyHuman(
-            `New order ${order.id} from ${order.customerName} (${ctx.chatId}): ` +
-              order.items.map((i) => `${i.quantity}x ${i.name}`).join(", ") +
-              ` — total ${order.total} ${config.STORE_CURRENCY}`,
+            `Lead ${after.stage}: ${after.name ?? ctx.senderName ?? ""} (${ctx.chatId}), ` +
+              `${after.grade ?? "?"} сынып, ${after.subjects ?? "?"}` +
+              (after.parentPhone ? `, ата-ана: ${after.parentPhone}` : "") +
+              (after.paymentPreference ? `, төлем: ${after.paymentPreference}` : ""),
           );
-          return JSON.stringify({ ok: true, orderId: order.id, total: order.total });
-        } catch (err) {
-          return JSON.stringify({ ok: false, error: (err as Error).message });
         }
+        return "saved";
       },
     }),
     betaZodTool({
       name: "request_human",
-      description: "Hand the conversation to a human team member (complaints, refunds, special requests).",
+      description: "Hand the conversation to a human manager (complaints, refunds, questions the script doesn't cover).",
       inputSchema: z.object({ reason: z.string() }),
       run: async ({ reason }) => {
-        await ctx.notifyHuman(`Customer ${ctx.senderName ?? ""} (${ctx.chatId}) needs a human: ${reason}`);
-        return "A team member has been notified.";
+        await ctx.notifyHuman(`Customer ${ctx.senderName ?? ""} (${ctx.chatId}) needs a manager: ${reason}`);
+        return "A manager has been notified.";
       },
     }),
   ];
@@ -104,7 +107,7 @@ export async function replyToCustomer(ctx: SellerContext, text: string): Promise
   });
 
   if (final.stop_reason === "refusal") {
-    return "Sorry, I can't help with that here. A team member will get back to you.";
+    return "Кешіріңіз, бұл сұраққа менеджер жауап береді. Жақын арада хабарласамыз 🙏";
   }
 
   const reply = final.content
@@ -113,7 +116,7 @@ export async function replyToCustomer(ctx: SellerContext, text: string): Promise
     .join("\n")
     .trim();
 
-  // Store only the visible turn; tool calls are re-done from the catalog when needed.
+  // Store only the visible turn; lead details live in data/leads.json.
   const updated: Anthropic.Beta.BetaMessageParam[] = [
     ...messages,
     { role: "assistant", content: reply || "…" },

@@ -3,6 +3,6 @@ dist/
 .env
 # WhatsApp session credentials (Baileys) — never commit
 auth/
-data/orders.json
+data/leads.json
 *.log
 waha-sessions/
