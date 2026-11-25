@@ -43,12 +43,14 @@ jobs:
       - name: Upload code to the server
         env:
           TARGET: ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}
-        # Server-only files (.env, WhatsApp session, leads) are excluded, so they are never overwritten or deleted.
+        # Server-only files (.env, WhatsApp session, data/ with the database and the script edited in the panel) are never overwritten or deleted.
         run: |
-          ssh "$TARGET" "mkdir -p ~/$APP_DIR"
+          ssh "$TARGET" "mkdir -p ~/$APP_DIR/data"
+          # First deploy only: seed the sales script (later it's edited in the admin panel).
+          rsync -az --ignore-existing data/script.md "$TARGET:~/$APP_DIR/data/"
           rsync -az --delete \
             --exclude .git --exclude .github --exclude node_modules --exclude dist \
-            --exclude .env --exclude waha-sessions --exclude auth --exclude data/leads.json \
+            --exclude .env --exclude waha-sessions --exclude auth --exclude /data \
             ./ "$TARGET:~/$APP_DIR/"
 
       - name: Restart containers

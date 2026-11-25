@@ -4,21 +4,30 @@ import makeWASocket, {
   useMultiFileAuthState,
   type WASocket,
 } from "baileys";
-import qrcode from "qrcode-terminal";
+import { rm } from "node:fs/promises";
+import QRCode from "qrcode";
 import pino from "pino";
-import type { MessageHandler, WhatsAppClient } from "./types.js";
+import type { MessageHandler, WhatsAppClient, WhatsAppStatus } from "./types.js";
 
 /**
- * Runs WhatsApp Web inside this Node process. On first start it prints a QR
- * code in the server logs: scan it from the phone (Linked devices) and the
- * session is saved to BAILEYS_AUTH_DIR so restarts don't need a new scan.
+ * Runs WhatsApp Web inside this Node process. The QR code is shown in the
+ * admin panel (and logs); the session is saved to BAILEYS_AUTH_DIR.
  */
 export class BaileysClient implements WhatsAppClient {
   private sock?: WASocket;
+  private onMessage?: MessageHandler;
+  private qr?: string;
+  private state: WhatsAppStatus = { status: "STOPPED" };
 
   constructor(private authDir: string) {}
 
   async start(onMessage: MessageHandler): Promise<void> {
+    this.onMessage = onMessage;
+    await this.open();
+  }
+
+  private async open(): Promise<void> {
+    this.state = { status: "STARTING" };
     const { state, saveCreds } = await useMultiFileAuthState(this.authDir);
     const { version } = await fetchLatestBaileysVersion();
 
@@ -34,19 +43,25 @@ export class BaileysClient implements WhatsAppClient {
 
     sock.ev.on("connection.update", ({ connection, lastDisconnect, qr }) => {
       if (qr) {
-        console.log("[baileys] Scan this QR with WhatsApp > Linked devices:");
-        qrcode.generate(qr, { small: true });
+        this.qr = qr;
+        this.state = { status: "SCAN_QR_CODE" };
+        console.log("[baileys] waiting for QR scan (open the admin panel)");
       }
-      if (connection === "open") console.log("[baileys] connected");
+      if (connection === "open") {
+        this.qr = undefined;
+        this.state = { status: "CONNECTED", me: { id: sock.user?.id, pushName: sock.user?.name } };
+        console.log("[baileys] connected");
+      }
       if (connection === "close") {
         const code = (lastDisconnect?.error as { output?: { statusCode?: number } } | undefined)
           ?.output?.statusCode;
         if (code === DisconnectReason.loggedOut) {
-          console.error(`[baileys] logged out. Delete "${this.authDir}" and restart to re-link.`);
+          this.state = { status: "STOPPED", detail: "Logged out" };
+          console.error("[baileys] logged out; use Connect in the admin panel to link again.");
           return;
         }
         console.warn(`[baileys] connection closed (${code ?? "unknown"}), reconnecting...`);
-        void this.start(onMessage);
+        void this.open();
       }
     });
 
@@ -55,7 +70,6 @@ export class BaileysClient implements WhatsAppClient {
       for (const m of messages) {
         const chatId = m.key.remoteJid;
         if (!chatId || m.key.fromMe) continue;
-        // Only 1:1 chats; skip groups, broadcasts and status updates.
         if (chatId.endsWith("@g.us") || chatId.endsWith("@broadcast") || chatId.endsWith("@newsletter")) continue;
 
         const text =
@@ -67,7 +81,7 @@ export class BaileysClient implements WhatsAppClient {
 
         try {
           await sock.readMessages([m.key]);
-          await onMessage({ chatId, text, senderName: m.pushName ?? undefined });
+          await this.onMessage?.({ chatId, text, senderName: m.pushName ?? undefined });
         } catch (err) {
           console.error("[baileys] handler error", err);
         }
@@ -86,5 +100,32 @@ export class BaileysClient implements WhatsAppClient {
 
   phoneToChatId(phone: string): string {
     return `${phone.replace(/\D/g, "")}@s.whatsapp.net`;
+  }
+
+  async getStatus(): Promise<WhatsAppStatus> {
+    return this.state;
+  }
+
+  async connect(): Promise<void> {
+    if (this.state.status === "STOPPED" || this.state.status === "FAILED") await this.open();
+  }
+
+  async getQr(): Promise<string | undefined> {
+    return this.qr ? QRCode.toDataURL(this.qr, { margin: 1, width: 320 }) : undefined;
+  }
+
+  async requestPairingCode(phone: string): Promise<string> {
+    if (!this.sock) throw new Error("Baileys not started");
+    return this.sock.requestPairingCode(phone.replace(/\D/g, ""));
+  }
+
+  async logout(): Promise<void> {
+    await this.sock?.logout().catch(() => {});
+    await rm(this.authDir, { recursive: true, force: true });
+    this.state = { status: "STOPPED", detail: "Logged out" };
+  }
+
+  async restart(): Promise<void> {
+    this.sock?.end(undefined);
   }
 }

@@ -1,0 +1,8 @@
+# HTTPS (automatic Let's Encrypt certificate) in front of the bot's admin panel.
+{$DOMAIN} {
+	encode gzip
+	# WAHA's webhook only needs to work inside Docker; don't expose it.
+	@webhook path /webhooks/*
+	respond @webhook 404
+	reverse_proxy bot:3000
+}

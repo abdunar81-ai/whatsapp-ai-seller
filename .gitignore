@@ -4,5 +4,7 @@ dist/
 # WhatsApp session credentials (Baileys) — never commit
 auth/
 data/leads.json
+data/bot.db*
 *.log
 waha-sessions/
+.claude/

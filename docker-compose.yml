@@ -3,7 +3,7 @@ services:
   waha:
     image: devlikeapro/waha
     ports:
-      - "127.0.0.1:3001:3000"   # dashboard/API only on the server itself (use an SSH tunnel to open it)
+      - "127.0.0.1:3001:3000"   # only reachable from the server itself
     environment:
       WHATSAPP_DEFAULT_ENGINE: NOWEB
       WAHA_API_KEY: ${WAHA_API_KEY:-}
@@ -22,7 +22,27 @@ services:
     ports:
       - "127.0.0.1:3000:3000"
     volumes:
-      - ./data:/app/data   # products.json + orders.json
+      - ./data:/app/data   # script.md + bot.db (chats, leads, stats, settings)
     depends_on:
       - waha
     restart: unless-stopped
+
+  # HTTPS for the admin panel at https://$DOMAIN
+  caddy:
+    image: caddy:2-alpine
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      DOMAIN: ${DOMAIN:-localhost}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      - bot
+    restart: unless-stopped
+
+volumes:
+  caddy-data:
+  caddy-config:
