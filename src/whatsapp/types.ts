@@ -1,8 +1,11 @@
 export interface IncomingMessage {
   /** Chat id in WhatsApp JID form, e.g. 77011234567@s.whatsapp.net or 77011234567@c.us */
   chatId: string;
+  /** Text of the message; empty for a voice note. */
   text: string;
   senderName?: string;
+  /** Present for voice notes: downloads the audio. */
+  voice?: () => Promise<{ data: Buffer; mimetype: string }>;
 }
 
 export type MessageHandler = (msg: IncomingMessage) => Promise<void>;
@@ -29,6 +32,8 @@ export interface WhatsAppClient {
   setTyping(chatId: string, typing: boolean): Promise<void>;
   /** Build a chat id for a plain phone number (digits only). */
   phoneToChatId(phone: string): string;
+  /** The linked number's own chat ("You" / message yourself), when connected. */
+  ownChatId(): Promise<string | undefined>;
 
   // --- connection management (admin panel) ---
   getStatus(): Promise<WhatsAppStatus>;

@@ -9,6 +9,18 @@ import { chatMessages, getChat, listChats, logMessage, resetHistory, setPaused }
 import { LEAD_STAGES, listLeads, upsertLead, type LeadStage } from "../store/leads.js";
 import { EFFORTS, MODELS, getSettings, readScript, updateSettings, writeScript, type Effort } from "../store/settings.js";
 import type { WhatsAppClient } from "../whatsapp/types.js";
+import {
+  addKnowledge,
+  answerQuestion,
+  deleteKnowledge,
+  dismissQuestion,
+  getQuestion,
+  listKnowledge,
+  listQuestions,
+  openQuestionCount,
+  updateKnowledge,
+} from "../store/questions.js";
+import { voiceEnabled } from "../ai/transcribe.js";
 import { login, logout, requireAuth, isAuthed } from "./auth.js";
 
 const startedAt = Date.now();
@@ -40,6 +52,7 @@ function stats() {
     newChatsToday: one<{ n: number }>(`SELECT COUNT(*) n FROM chats WHERE ${since(1)}`).n,
     readyToPay: one<{ n: number }>(`SELECT COUNT(*) n FROM leads WHERE stage IN ('ready_to_pay','paid')`).n,
     paused: one<{ n: number }>("SELECT COUNT(*) n FROM chats WHERE paused = 1").n,
+    openQuestions: openQuestionCount(),
   };
 
   const cost = (days: number) =>
@@ -96,7 +109,7 @@ export function mountAdmin(app: Express, wa: WhatsAppClient, notifyHuman: (s: st
   app.use("/admin/api", api);
 
   // Panel pages: /admin/chats, /admin/chats/<id>, /admin/leads?stage=..., etc. all load the same app.
-  const PAGES = /^\/admin(\/(overview|chats|leads|tuning|whatsapp|server)(\/[^/]*)?)?\/?$/;
+  const PAGES = /^\/admin(\/(overview|chats|leads|questions|tuning|whatsapp|server)(\/[^/]*)?)?\/?$/;
   app.get(PAGES, (_req, res) => res.sendFile("index.html", { root: "public/admin" }));
 
   api.post("/login", login);
@@ -152,6 +165,44 @@ export function mountAdmin(app: Express, wa: WhatsAppClient, notifyHuman: (s: st
     res.send("﻿" + [cols.join(","), ...rows].join("\n"));
   });
 
+  // --- questions the bot couldn't answer + knowledge base ---
+  api.get("/questions", h((req) => ({ questions: listQuestions(req.query.status ? String(req.query.status) : undefined), open: openQuestionCount() })));
+  api.post(
+    "/questions/:id/answer",
+    h(async (req) => {
+      const q = getQuestion(Number(req.params.id));
+      if (!q) throw new Error("Вопрос не найден");
+      const answer = String(req.body?.answer ?? "").trim();
+      if (!answer) throw new Error("Напишите ответ");
+      if (req.body?.sendToCustomer !== false) {
+        await wa.sendText(q.chat_id, answer);
+        logMessage(q.chat_id, "manual", answer); // the bot sees it in the history; it keeps replying
+      }
+      answerQuestion(q.id, answer);
+      if (req.body?.addToKnowledge) addKnowledge(String(req.body?.question ?? q.question).trim() || q.question, answer);
+    }),
+  );
+  api.post("/questions/:id/dismiss", h((req) => dismissQuestion(Number(req.params.id))));
+
+  api.get("/knowledge", h(() => ({ items: listKnowledge() })));
+  api.post(
+    "/knowledge",
+    h((req) => {
+      const q = String(req.body?.question ?? "").trim(), a = String(req.body?.answer ?? "").trim();
+      if (!q || !a) throw new Error("Нужны и вопрос, и ответ");
+      return addKnowledge(q, a);
+    }),
+  );
+  api.put(
+    "/knowledge/:id",
+    h((req) => {
+      const q = String(req.body?.question ?? "").trim(), a = String(req.body?.answer ?? "").trim();
+      if (!q || !a) throw new Error("Нужны и вопрос, и ответ");
+      updateKnowledge(Number(req.params.id), q, a);
+    }),
+  );
+  api.delete("/knowledge/:id", h((req) => deleteKnowledge(Number(req.params.id))));
+
   // --- tuning: script, settings, test chat ---
   api.get("/script", h(() => ({ script: readScript() })));
   api.put(
@@ -188,7 +239,7 @@ export function mountAdmin(app: Express, wa: WhatsAppClient, notifyHuman: (s: st
       const clean = history
         .filter((t) => (t.role === "user" || t.role === "assistant") && typeof t.text === "string")
         .slice(-40);
-      const reply = await replyToCustomer({ chatId: "test:admin", dryRun: true, notifyHuman }, clean);
+      const reply = await replyToCustomer({ chatId: "test:admin", dryRun: true, notifyHuman, askManager: async () => 0 }, clean);
       return { reply };
     }),
   );
@@ -215,6 +266,7 @@ export function mountAdmin(app: Express, wa: WhatsAppClient, notifyHuman: (s: st
       return {
         provider: config.WHATSAPP_PROVIDER,
         model: getSettings().model,
+        voice: voiceEnabled(),
         node: process.version,
         uptimeSec: Math.round((Date.now() - startedAt) / 1000),
         hostUptimeSec: Math.round(os.uptime()),

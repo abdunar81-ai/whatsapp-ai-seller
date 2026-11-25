@@ -19,12 +19,26 @@ services:
     environment:
       WHATSAPP_PROVIDER: waha
       WAHA_URL: http://waha:3000
+      WHISPER_URL: http://whisper:9000
     ports:
       - "127.0.0.1:3000:3000"
     volumes:
       - ./data:/app/data   # script.md + bot.db (chats, leads, stats, settings)
     depends_on:
       - waha
+      - whisper
+    restart: unless-stopped
+
+  # Speech-to-text for voice notes (Kazakh + Russian). "small" fits a 2 GB server;
+  # the model unloads after 10 idle minutes to free memory.
+  whisper:
+    image: onerahmet/openai-whisper-asr-webservice:latest
+    environment:
+      ASR_MODEL: small
+      ASR_ENGINE: faster_whisper
+      MODEL_IDLE_TIMEOUT: 600
+    volumes:
+      - whisper-cache:/root/.cache
     restart: unless-stopped
 
   # HTTPS for the admin panel at https://$DOMAIN
@@ -44,5 +58,6 @@ services:
     restart: unless-stopped
 
 volumes:
+  whisper-cache:
   caddy-data:
   caddy-config:

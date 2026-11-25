@@ -3,12 +3,13 @@ import { betaZodTool } from "@anthropic-ai/sdk/helpers/beta/zod";
 import { z } from "zod/v4";
 import { LEAD_STAGES, upsertLead } from "../store/leads.js";
 import { getSettings, readScript } from "../store/settings.js";
+import { knowledgeText } from "../store/questions.js";
 import { recordUsage } from "../store/usage.js";
 
 const client = new Anthropic(); // reads ANTHROPIC_API_KEY
 
 // Kept byte-stable for a given script + payment link, so prompt caching keeps hitting.
-function buildSystemPrompt(script: string, paymentLink: string): string {
+function buildSystemPrompt(script: string, knowledge: string, paymentLink: string): string {
   const paymentStep = paymentLink
     ? `When the customer is ready to pay, send this payment link: ${paymentLink}`
     : "There is no payment link yet: when the customer is ready to pay, set stage ready_to_pay with save_lead and tell them the manager will send the payment link shortly.";
@@ -20,22 +21,32 @@ How you work:
 - Language: Kazakh by default, as in the script. If the customer writes in Russian, answer in Russian.
 - Go through the script steps in order, one step per message, and ask one question at a time. Wait for the answer before moving on. Adapt the wording to what the customer said (their subjects, specialty, goals); don't paste whole blocks they've already seen.
 - If the customer asks something out of order (e.g. the price right away), answer it briefly and steer back to the next step.
-- Only use facts, prices, bonuses and payment terms from the script. Never invent discounts, deadlines, guarantees or features. If you don't know, say a manager will clarify and call request_human.
+- Only use facts, prices, bonuses and payment terms from the script and the knowledge base. Never invent discounts, deadlines, guarantees or features.
+- If the customer asks something the script and knowledge base don't answer, don't guess: call ask_manager with their question (keep their words), tell them you'll check with the manager and get back to them, then continue the script where it makes sense.
+- Messages starting with 🎤 are automatic transcripts of voice notes and may contain recognition mistakes; read them for meaning, and if one is unclear, ask the customer to repeat or write it.
 - If someone sincerely asks whether they're talking to a bot, say honestly that you are GLUCOSE's AI assistant and a manager can join the chat.
 - Call save_lead whenever you learn something new about the customer (name, grade, subjects, specialty, target score, what matters to them, parent's phone, payment preference) and when the conversation moves to a new stage. Don't mention that you're saving anything.
 - ${paymentStep}
 - If the customer gives a parent's phone number for a call, save it (stage parent_call) and say the manager will call.
-- Complaints, refunds, or anything you can't handle: call request_human and tell the customer a manager will reply soon.
+- Complaints, refunds, or a customer who wants a real person: call request_human and tell the customer a manager will reply soon.
 
 <script>
 ${script}
-</script>`;
+</script>
+
+<knowledge_base>
+Answers the managers gave to earlier questions. Use them like script facts.
+
+${knowledge || "(empty)"}
+</knowledge_base>`;
 }
 
 export interface SellerContext {
   chatId: string;
   senderName?: string;
   notifyHuman: (summary: string) => Promise<void>;
+  /** Send a question the script can't answer to the managers; returns its number. */
+  askManager: (question: string) => Promise<number>;
   /** Test chat from the admin panel: nothing is saved and nobody is notified. */
   dryRun?: boolean;
 }
@@ -81,6 +92,19 @@ function buildTools(ctx: SellerContext) {
       },
     }),
     betaZodTool({
+      name: "ask_manager",
+      description:
+        "Ask the managers a question the script and knowledge base don't answer. They reply to the customer themselves.",
+      inputSchema: z.object({
+        question: z.string().describe("The customer's question, in their words"),
+      }),
+      run: async ({ question }) => {
+        if (ctx.dryRun) return "Test mode: the question was not sent. In real chats the managers get it.";
+        const id = await ctx.askManager(question);
+        return `Question #${id} sent to the managers. They will answer the customer in this chat.`;
+      },
+    }),
+    betaZodTool({
       name: "request_human",
       description: "Hand the conversation to a human manager (complaints, refunds, questions the script doesn't cover).",
       inputSchema: z.object({ reason: z.string() }),
@@ -115,7 +139,7 @@ export async function replyToCustomer(ctx: SellerContext, history: Turn[]): Prom
   const runner = client.beta.messages.toolRunner({
     model: settings.model,
     max_tokens: 16000,
-    system: buildSystemPrompt(readScript(), settings.paymentLink),
+    system: buildSystemPrompt(readScript(), knowledgeText(), settings.paymentLink),
     cache_control: { type: "ephemeral" },
     output_config: { effort: settings.effort },
     // If a safety classifier declines, retry on Anthropic's recommended fallback model.

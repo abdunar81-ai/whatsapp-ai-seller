@@ -37,6 +37,7 @@
       <button data-tab="overview" class="active">Обзор</button>
       <button data-tab="chats">Чаты</button>
       <button data-tab="leads">Заявки</button>
+      <button data-tab="questions">Вопросы <span id="q-badge" class="badge hidden"></span></button>
       <button data-tab="tuning">Настройка бота</button>
       <button data-tab="whatsapp">WhatsApp</button>
       <button data-tab="server">Сервер</button>
@@ -88,6 +89,38 @@
             </div>
           </div>
           <div class="table-wrap"><table id="leads-table"></table></div>
+        </div>
+      </section>
+
+      <!-- Вопросы и база знаний -->
+      <section data-panel="questions" class="hidden">
+        <div class="grid two">
+          <div class="card">
+            <div class="row between">
+              <h3>Вопросы, на которые бот не знает ответа</h3>
+              <select id="q-filter">
+                <option value="open">Новые</option>
+                <option value="answered">Отвеченные</option>
+                <option value="dismissed">Отклонённые</option>
+                <option value="">Все</option>
+              </select>
+            </div>
+            <p class="muted small">Бот не выдумывает ответ: присылает вопрос сюда и в WhatsApp (чат «Вы» номера центра или номер менеджера). Ответ уходит ученику, а с галочкой — ещё и в базу знаний, чтобы в следующий раз бот ответил сам.</p>
+            <div id="q-list" class="q-list"></div>
+          </div>
+          <div class="card">
+            <div class="row between">
+              <h3>База знаний</h3>
+              <span class="muted small" id="kb-count"></span>
+            </div>
+            <p class="muted small">Ответы, которые бот использует наравне со скриптом.</p>
+            <form id="kb-form" class="form kb-new">
+              <input id="kb-q" placeholder="Вопрос, напр. «Есть ли пробный урок?»" />
+              <textarea id="kb-a" rows="3" placeholder="Ответ"></textarea>
+              <div class="row between"><span></span><button class="btn primary" type="submit">Добавить</button></div>
+            </form>
+            <div id="kb-list" class="kb-list"></div>
+          </div>
         </div>
       </section>
 

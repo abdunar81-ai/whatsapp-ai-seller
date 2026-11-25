@@ -145,6 +145,21 @@ details summary { cursor: pointer; margin: 8px 0; }
 /* Logs */
 .logs { background: #0b0f0d; color: #cfe3d6; padding: 12px; border-radius: 8px; max-height: 480px; overflow: auto; font-size: 12px; line-height: 1.45; white-space: pre-wrap; word-break: break-all; }
 
+/* Questions & knowledge base */
+.badge { background: var(--danger); color: #fff; border-radius: 999px; font-size: 11px; padding: 1px 7px; margin-left: 4px; font-weight: 600; }
+.q-list, .kb-list { display: flex; flex-direction: column; gap: 12px; }
+.q-item, .kb-item { border: 1px solid var(--line); border-radius: 10px; padding: 12px; display: flex; flex-direction: column; gap: 8px; }
+.q-item.highlight { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-soft); }
+.q-head { display: flex; justify-content: space-between; gap: 8px; flex-wrap: wrap; font-size: 12px; color: var(--muted); }
+.q-text { font-size: 15px; font-weight: 600; white-space: pre-wrap; }
+.q-answer { white-space: pre-wrap; background: var(--accent-soft); border-radius: 8px; padding: 8px 10px; }
+.q-item textarea, .kb-item textarea { min-height: 70px; resize: vertical; }
+.checks { display: flex; gap: 14px; flex-wrap: wrap; font-size: 13px; }
+.checks label { display: flex; gap: 6px; align-items: center; }
+.checks input { width: auto; accent-color: var(--accent); }
+.kb-new { padding-bottom: 12px; border-bottom: 1px solid var(--line); margin-bottom: 4px; }
+.kb-item .q-text { font-size: 14px; }
+
 .toast { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); background: var(--text); color: var(--bg); padding: 10px 16px; border-radius: 8px; z-index: 10; max-width: 90vw; }
 
 @media (max-width: 760px) {

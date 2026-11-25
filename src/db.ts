@@ -42,6 +42,24 @@ CREATE TABLE IF NOT EXISTS usage (
   created_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS usage_time ON usage (created_at);
+CREATE TABLE IF NOT EXISTS questions (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  chat_id TEXT NOT NULL,
+  customer_name TEXT,
+  question TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open', 'answered', 'dismissed')),
+  answer TEXT,
+  created_at TEXT NOT NULL,
+  answered_at TEXT
+);
+CREATE INDEX IF NOT EXISTS questions_status ON questions (status, id);
+CREATE TABLE IF NOT EXISTS knowledge (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  question TEXT NOT NULL,
+  answer TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS settings (
   key TEXT PRIMARY KEY,
   value TEXT NOT NULL

@@ -15,6 +15,10 @@ const schema = z.object({
   ADMIN_PHONE: z.string().default(""),
   // Admin panel (empty password = panel disabled)
   ADMIN_PASSWORD: z.string().default(""),
+  // Public address of the admin panel, used in links sent to WhatsApp
+  DOMAIN: z.string().default(""),
+  // Whisper speech-to-text service for voice notes (empty = voice notes not supported)
+  WHISPER_URL: z.string().default(""),
   // Hours from UTC for daily stats (Kazakhstan = 5)
   TZ_OFFSET_HOURS: z.coerce.number().default(5),
   SESSION_SECRET: z.string().default(""),

@@ -129,8 +129,8 @@ $("#logout").addEventListener("click", async () => {
 // ---------- routing ----------
 // URLs: /admin/overview, /admin/chats, /admin/chats/<chat id>, /admin/leads?stage=<stage>,
 //       /admin/tuning, /admin/whatsapp, /admin/server
-const TABS = ["overview", "chats", "leads", "tuning", "whatsapp", "server"];
-const TAB_TITLES = { overview: "Обзор", chats: "Чаты", leads: "Заявки", tuning: "Настройка бота", whatsapp: "WhatsApp", server: "Сервер" };
+const TABS = ["overview", "chats", "leads", "questions", "tuning", "whatsapp", "server"];
+const TAB_TITLES = { overview: "Обзор", chats: "Чаты", leads: "Заявки", questions: "Вопросы", tuning: "Настройка бота", whatsapp: "WhatsApp", server: "Сервер" };
 const BASE = "/admin";
 let currentTab = "overview";
 const loaders = {};
@@ -143,6 +143,7 @@ function parseRoute() {
   return {
     tab,
     chatId: tab === "chats" && parts[1] ? decodeURIComponent(parts[1]) : null,
+    questionId: tab === "questions" && parts[1] ? Number(parts[1]) : null,
     stage: new URLSearchParams(location.search).get("stage") ?? "",
   };
 }
@@ -168,6 +169,8 @@ function applyRoute() {
       if (!r.chatId) $("#chat-view").innerHTML = '<p class="muted">Выберите диалог.</p>';
     }
     loaders.chats();
+  } else if (r.tab === "questions") {
+    loaders.questions(r.questionId);
   } else if (r.tab === "leads") {
     $("#lead-filter").value = r.stage;
     loaders.leads();
@@ -188,6 +191,7 @@ $("#tabs").addEventListener("click", (e) => {
 
 // ---------- header: WhatsApp pill + bot switch ----------
 async function refreshHeader() {
+  api("questions?status=open").then((r) => setQuestionBadge(r.open)).catch(() => {});
   try {
     const s = await api("whatsapp");
     const pill = $("#wa-pill");
@@ -389,6 +393,150 @@ loaders.leads = async () => {
   leads = await api("leads");
   renderLeads();
 };
+
+// ---------- questions & knowledge base ----------
+function setQuestionBadge(n) {
+  const b = $("#q-badge");
+  b.textContent = n;
+  b.classList.toggle("hidden", !n);
+}
+
+let questionsCache = [];
+loaders.questions = async (highlightId = null) => {
+  if (highlightId) {
+    // Opened from the WhatsApp link: make sure that question is in the list.
+    $("#q-filter").value = "";
+  }
+  const status = $("#q-filter").value;
+  const [{ questions, open }, { items }] = await Promise.all([
+    api(`questions${status ? `?status=${status}` : ""}`),
+    api("knowledge"),
+  ]);
+  questionsCache = questions;
+  setQuestionBadge(open);
+  renderQuestions(highlightId);
+  renderKnowledge(items);
+};
+$("#q-filter").addEventListener("change", () => loaders.questions());
+
+function renderQuestions(highlightId) {
+  const STATUS = { open: "Новый", answered: "Отвечен", dismissed: "Отклонён" };
+  $("#q-list").innerHTML =
+    questionsCache
+      .map(
+        (q) => `<div class="q-item ${q.id === highlightId ? "highlight" : ""}" data-q="${q.id}">
+          <div class="q-head">
+            <span>#${q.id} · ${esc(q.customer_name || "без имени")} · <a href="/admin/chats/${chatPath(q.chat_id)}" data-chat="${esc(q.chat_id)}">${esc(phone(q.chat_id))}</a></span>
+            <span>${STATUS[q.status]} · ${time(q.created_at)}</span>
+          </div>
+          <div class="q-text">${esc(q.question)}</div>
+          ${
+            q.status === "open"
+              ? `<textarea class="q-answer-input" placeholder="Ответ ученику…"></textarea>
+                 <div class="checks">
+                   <label><input type="checkbox" class="q-send" checked /> Отправить ученику в WhatsApp</label>
+                   <label><input type="checkbox" class="q-kb" checked /> Добавить в базу знаний</label>
+                 </div>
+                 <div class="row between">
+                   <button class="btn ghost q-dismiss">Отклонить</button>
+                   <button class="btn primary q-submit">Ответить</button>
+                 </div>`
+              : q.answer
+              ? `<div class="q-answer">${esc(q.answer)}</div>`
+              : ""
+          }
+        </div>`,
+      )
+      .join("") || '<p class="muted">Вопросов нет 🎉</p>';
+  if (highlightId) document.querySelector(`[data-q="${highlightId}"]`)?.scrollIntoView({ block: "center" });
+}
+
+$("#q-list").addEventListener("click", async (e) => {
+  const link = e.target.closest("a[data-chat]");
+  if (link) {
+    e.preventDefault();
+    return navigate(`chats/${chatPath(link.dataset.chat)}`);
+  }
+  const item = e.target.closest(".q-item");
+  if (!item) return;
+  const id = Number(item.dataset.q);
+  try {
+    if (e.target.classList.contains("q-submit")) {
+      const answer = item.querySelector(".q-answer-input").value.trim();
+      if (!answer) return toast("Напишите ответ");
+      e.target.disabled = true;
+      await api(`questions/${id}/answer`, {
+        method: "POST",
+        body: {
+          answer,
+          sendToCustomer: item.querySelector(".q-send").checked,
+          addToKnowledge: item.querySelector(".q-kb").checked,
+        },
+      });
+      toast(item.querySelector(".q-send").checked ? "Ответ отправлен ученику" : "Ответ сохранён");
+      loaders.questions();
+    } else if (e.target.classList.contains("q-dismiss")) {
+      await api(`questions/${id}/dismiss`, { method: "POST" });
+      toast("Вопрос отклонён");
+      loaders.questions();
+    }
+  } catch (err) {
+    e.target.disabled = false;
+    toast(err.message);
+  }
+});
+
+function renderKnowledge(items) {
+  $("#kb-count").textContent = items.length ? `записей: ${items.length}` : "";
+  $("#kb-list").innerHTML =
+    items
+      .map(
+        (k) => `<div class="kb-item" data-kb="${k.id}">
+          <input class="kb-edit-q" value="${esc(k.question)}" />
+          <textarea class="kb-edit-a">${esc(k.answer)}</textarea>
+          <div class="row between">
+            <button class="btn ghost danger kb-delete">Удалить</button>
+            <button class="btn kb-save">Сохранить</button>
+          </div>
+        </div>`,
+      )
+      .join("") || '<p class="muted small">Пока пусто. Записи появятся, когда вы ответите на вопросы, или добавьте их сами.</p>';
+}
+
+$("#kb-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  try {
+    await api("knowledge", { method: "POST", body: { question: $("#kb-q").value, answer: $("#kb-a").value } });
+    $("#kb-q").value = "";
+    $("#kb-a").value = "";
+    toast("Добавлено в базу знаний");
+    loaders.questions();
+  } catch (err) {
+    toast(err.message);
+  }
+});
+
+$("#kb-list").addEventListener("click", async (e) => {
+  const item = e.target.closest(".kb-item");
+  if (!item) return;
+  const id = item.dataset.kb;
+  try {
+    if (e.target.classList.contains("kb-save")) {
+      await api(`knowledge/${id}`, {
+        method: "PUT",
+        body: { question: item.querySelector(".kb-edit-q").value, answer: item.querySelector(".kb-edit-a").value },
+      });
+      toast("Сохранено");
+    } else if (e.target.classList.contains("kb-delete")) {
+      if (!confirm("Удалить эту запись из базы знаний?")) return;
+      await api(`knowledge/${id}`, { method: "DELETE" });
+      toast("Удалено");
+      loaders.questions();
+    }
+  } catch (err) {
+    toast(err.message);
+  }
+});
 
 // ---------- tuning ----------
 loaders.tuning = async () => {

@@ -7,9 +7,11 @@ A WhatsApp sales bot for **GLUCOSE** (ҰБТ prep courses) with its own server. 
 ```
 WhatsApp customer ──► WhatsApp connector (Baileys or WAHA) ──► Express server ──► Claude (tool use)
                                                                                     ├─ save_lead
+                                                                                    ├─ ask_manager
                                                                                     └─ request_human
 ```
 
+- **Voice notes** are transcribed by a local Whisper (`small`) container (Kazakh + Russian), then answered like text.
 - `src/whatsapp/waha.ts` – **default.** A [WAHA](https://waha.devlike.pro) container holds the WhatsApp session (NOWEB engine, no browser) and posts messages to `/webhooks/waha`.
 - `src/whatsapp/baileys.ts` – alternative: runs WhatsApp Web inside the Node process (session saved in `auth/`).
 - `data/script.md` – **the sales script and course facts** (Kazakh). Edit it to change what the bot says, then restart the bot.
@@ -24,6 +26,7 @@ WhatsApp customer ──► WhatsApp connector (Baileys or WAHA) ──► Expre
 - **Overview** – messages, conversations, leads, funnel by stage, Claude cost (today / 7 / 30 days), 14-day chart.
 - **Chats** – every conversation; take over a chat (pauses the bot there), write as the manager, reset the bot's memory.
 - **Leads** – everything the bot collected, change stages, export CSV for Excel.
+- **Questions** – questions the script doesn't cover. The bot asks the managers (WhatsApp alert to the manager number, or the store number's own "You" chat) instead of guessing; answer in the panel and tick "add to knowledge base" so the bot answers it itself next time. The knowledge base is editable here too.
 - **Bot tuning** – edit the sales script, reply depth (effort), Kaspi link, alert number; a **test chat** to try the bot without touching real customers.
 - **WhatsApp** – connection status, **QR code** to link the store number, or a pairing code, unlink/restart.
 - **Server** – uptime, CPU, memory, disk, live logs, restart the bot.
@@ -83,5 +86,5 @@ npm run dev
 ## Next steps
 
 - Move conversations/orders to a database (SQLite/Postgres) — memory is in-process today and resets on restart.
-- Handle images/voice notes (Claude can read images).
+- Handle images (Claude can read images).
 - Admin dashboard for orders and live takeover of chats.

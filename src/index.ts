@@ -8,6 +8,9 @@ import { WahaClient } from "./whatsapp/waha.js";
 import type { IncomingMessage, WhatsAppClient } from "./whatsapp/types.js";
 import { getChat, logMessage, recentHistory, resetHistory } from "./store/chats.js";
 import { getSettings } from "./store/settings.js";
+import { createQuestion } from "./store/questions.js";
+import { getLead } from "./store/leads.js";
+import { transcribe, voiceEnabled } from "./ai/transcribe.js";
 import { mountAdmin } from "./admin/routes.js";
 
 const MAX_HISTORY = 40;
@@ -22,20 +25,65 @@ const wa: WhatsAppClient =
     ? new WahaClient(app, config.WAHA_URL, config.WAHA_API_KEY, config.WAHA_SESSION)
     : new BaileysClient(config.BAILEYS_AUTH_DIR);
 
+/** Where alerts go: the manager's number if set, otherwise the store number's own "You" chat. */
+async function alertChatId(): Promise<string | undefined> {
+  const { adminPhone } = getSettings();
+  return adminPhone ? wa.phoneToChatId(adminPhone) : wa.ownChatId().catch(() => undefined);
+}
+
+async function sendAlert(text: string): Promise<void> {
+  const to = await alertChatId();
+  if (!to) return console.warn("[alert] no manager number and WhatsApp not connected; alert only in logs");
+  await wa.sendText(to, text).catch((err) => console.error("[alert] could not send", err));
+}
+
 async function notifyHuman(summary: string): Promise<void> {
   console.log(`[handoff] ${summary}`);
-  const { adminPhone } = getSettings();
-  if (adminPhone) {
-    await wa.sendText(wa.phoneToChatId(adminPhone), `🔔 ${summary}`).catch((err) =>
-      console.error("[handoff] could not notify admin", err),
+  await sendAlert(`🔔 ${summary}`);
+}
+
+const prettyPhone = (chatId: string) => {
+  const d = chatId.split("@")[0] ?? "";
+  return /^7\d{10}$/.test(d) ? `+7 (${d.slice(1, 4)}) ${d.slice(4, 7)}-${d.slice(7, 9)}-${d.slice(9)}` : `+${d}`;
+};
+
+function askManagerFor(chatId: string, senderName?: string) {
+  return async (question: string): Promise<number> => {
+    const name = getLead(chatId)?.name ?? senderName;
+    const q = createQuestion(chatId, name, question);
+    console.log(`[question #${q.id}] ${name ?? ""} ${chatId}: ${question}`);
+    const link = config.DOMAIN ? `\nОтветить: https://${config.DOMAIN}/admin/questions/${q.id}` : "";
+    await sendAlert(
+      `❓ Вопрос #${q.id}\nОт: ${name ?? "без имени"} ${prettyPhone(chatId)}\n«${question}»${link}`,
     );
-  }
+    return q.id;
+  };
 }
 
 // One message at a time per chat, so replies stay in order.
 const queues = new Map<string, Promise<void>>();
 
 async function handle(msg: IncomingMessage): Promise<void> {
+  if (msg.voice) {
+    const voice = msg.voice;
+    if (!voiceEnabled()) {
+      logMessage(msg.chatId, "in", "🎤 (голосовое сообщение)", msg.senderName);
+      await wa.sendText(msg.chatId, "Кешіріңіз, дауыстық хабарламаны аша алмадым. Мәтінмен жазып жіберсеңіз 🙏");
+      return;
+    }
+    await wa.setTyping(msg.chatId, true);
+    try {
+      const text = await transcribe(await voice());
+      msg = { ...msg, text: `🎤 ${text || "(неразборчиво)"}`, voice: undefined };
+    } catch (err) {
+      console.error("[voice] could not transcribe", err);
+      logMessage(msg.chatId, "in", "🎤 (голосовое сообщение — не удалось распознать)", msg.senderName);
+      await wa.setTyping(msg.chatId, false);
+      await wa.sendText(msg.chatId, "Кешіріңіз, дауыстық хабарламаны ести алмадым. Мәтінмен жазып жіберсеңіз 🙏");
+      return;
+    }
+  }
+
   logMessage(msg.chatId, "in", msg.text, msg.senderName);
 
   if (msg.text.trim().toLowerCase() === "/reset") {
@@ -53,7 +101,12 @@ async function handle(msg: IncomingMessage): Promise<void> {
       text: m.text,
     }));
     const reply = await replyToCustomer(
-      { chatId: msg.chatId, senderName: msg.senderName, notifyHuman },
+      {
+        chatId: msg.chatId,
+        senderName: msg.senderName,
+        notifyHuman,
+        askManager: askManagerFor(msg.chatId, msg.senderName),
+      },
       history,
     );
     if (reply) {

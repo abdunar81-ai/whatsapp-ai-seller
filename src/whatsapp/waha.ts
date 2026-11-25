@@ -22,15 +22,34 @@ export class WahaClient implements WhatsAppClient {
       if (event !== "message" || !payload || payload.fromMe) return;
       const chatId: string = payload.from;
       if (!chatId || chatId.endsWith("@g.us") || chatId === "status@broadcast") return;
-      const text: string | undefined = payload.body;
-      if (!text) return;
+      const text: string = payload.body ?? "";
+      const media = payload.media as { url?: string; mimetype?: string; error?: unknown } | undefined;
+      const isAudio = Boolean(payload.hasMedia && media?.mimetype?.startsWith("audio/"));
+      if (!text && !isAudio) return; // stickers, images without caption, etc.
       onMessage({
         chatId,
-        text,
+        text: isAudio ? "" : text,
         senderName: payload._data?.notifyName ?? payload._data?.pushName,
+        voice: isAudio ? () => this.download(media!) : undefined,
       }).catch((err) => console.error("[waha] handler error", err));
     });
     console.log(`[waha] webhook ready at /webhooks/waha (session "${this.session}")`);
+  }
+
+  /** Fetch a media file WAHA saved; its URL may name WAHA's own host, so use ours. */
+  private async download(media: { url?: string; mimetype?: string; error?: unknown }) {
+    if (!media.url) throw new Error(`WAHA did not provide the file: ${JSON.stringify(media.error ?? "no url")}`);
+    const u = new URL(media.url);
+    const res = await fetch(`${this.baseUrl}${u.pathname}${u.search}`, {
+      headers: this.apiKey ? { "X-Api-Key": this.apiKey } : {},
+    });
+    if (!res.ok) throw new Error(`WAHA file download failed: ${res.status}`);
+    return { data: Buffer.from(await res.arrayBuffer()), mimetype: media.mimetype ?? "audio/ogg" };
+  }
+
+  async ownChatId(): Promise<string | undefined> {
+    const s = await this.getStatus();
+    return s.status === "CONNECTED" && s.me?.id ? s.me.id : undefined;
   }
 
   private async call(method: "GET" | "POST", path: string, body?: unknown): Promise<globalThis.Response> {

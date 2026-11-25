@@ -1,5 +1,6 @@
 import makeWASocket, {
   DisconnectReason,
+  downloadMediaMessage,
   fetchLatestBaileysVersion,
   useMultiFileAuthState,
   type WASocket,
@@ -77,11 +78,22 @@ export class BaileysClient implements WhatsAppClient {
           m.message?.extendedTextMessage?.text ??
           m.message?.imageMessage?.caption ??
           m.message?.videoMessage?.caption;
-        if (!text) continue;
+        const audio = m.message?.audioMessage;
+        if (!text && !audio) continue;
 
         try {
           await sock.readMessages([m.key]);
-          await this.onMessage?.({ chatId, text, senderName: m.pushName ?? undefined });
+          await this.onMessage?.({
+            chatId,
+            text: text ?? "",
+            senderName: m.pushName ?? undefined,
+            voice: audio
+              ? async () => ({
+                  data: (await downloadMediaMessage(m, "buffer", {})) as Buffer,
+                  mimetype: audio.mimetype ?? "audio/ogg",
+                })
+              : undefined,
+          });
         } catch (err) {
           console.error("[baileys] handler error", err);
         }
@@ -100,6 +112,11 @@ export class BaileysClient implements WhatsAppClient {
 
   phoneToChatId(phone: string): string {
     return `${phone.replace(/\D/g, "")}@s.whatsapp.net`;
+  }
+
+  async ownChatId(): Promise<string | undefined> {
+    const id = this.sock?.user?.id;
+    return id ? id.replace(/:\d+@/, "@") : undefined;
   }
 
   async getStatus(): Promise<WhatsAppStatus> {
