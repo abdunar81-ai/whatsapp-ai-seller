@@ -24,7 +24,11 @@ export class WahaClient implements WhatsAppClient {
       if (!chatId || chatId.endsWith("@g.us") || chatId === "status@broadcast") return;
       const text: string | undefined = payload.body;
       if (!text) return;
-      onMessage({ chatId, text, senderName: payload._data?.notifyName }).catch((err) =>
+      onMessage({
+        chatId,
+        text,
+        senderName: payload._data?.notifyName ?? payload._data?.pushName,
+      }).catch((err) =>
         console.error("[waha] handler error", err),
       );
     });

@@ -1,24 +1,28 @@
 services:
+  # WhatsApp session lives here. NOWEB engine = no browser, fits a 2 GB server.
+  waha:
+    image: devlikeapro/waha
+    ports:
+      - "127.0.0.1:3001:3000"   # dashboard/API only on the server itself (use an SSH tunnel to open it)
+    environment:
+      WHATSAPP_DEFAULT_ENGINE: NOWEB
+      WAHA_API_KEY: ${WAHA_API_KEY:-}
+      WHATSAPP_HOOK_URL: http://bot:3000/webhooks/waha
+      WHATSAPP_HOOK_EVENTS: message
+    volumes:
+      - ./waha-sessions:/app/.sessions   # keeps the WhatsApp login across restarts
+    restart: unless-stopped
+
   bot:
     build: .
     env_file: .env
-    ports:
-      - "3000:3000"
-    volumes:
-      - ./auth:/app/auth   # Baileys WhatsApp session (keeps you linked across restarts)
-      - ./data:/app/data   # products.json + orders.json
-    restart: unless-stopped
-
-  # Only needed when WHATSAPP_PROVIDER=waha:  docker compose --profile waha up
-  waha:
-    profiles: ["waha"]
-    image: devlikeapro/waha
-    ports:
-      - "3001:3000"
     environment:
-      WHATSAPP_HOOK_URL: http://bot:3000/webhooks/waha
-      WHATSAPP_HOOK_EVENTS: message
-      WAHA_API_KEY: ${WAHA_API_KEY:-}
+      WHATSAPP_PROVIDER: waha
+      WAHA_URL: http://waha:3000
+    ports:
+      - "127.0.0.1:3000:3000"
     volumes:
-      - ./waha-sessions:/app/.sessions
+      - ./data:/app/data   # products.json + orders.json
+    depends_on:
+      - waha
     restart: unless-stopped
