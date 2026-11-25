@@ -1,138 +1,138 @@
 <!doctype html>
-<html lang="en">
+<html lang="ru">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>GLUCOSE Bot — Admin</title>
+  <title>GLUCOSE Bot — Админ-панель</title>
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><circle cx='16' cy='16' r='14' fill='%2316a34a'/></svg>" />
-  <link rel="stylesheet" href="style.css" />
+  <link rel="stylesheet" href="/admin/style.css" />
 </head>
 <body>
-  <!-- Login -->
+  <!-- Вход -->
   <section id="login" class="login hidden">
     <form id="login-form" class="card login-card">
       <div class="brand"><span class="dot"></span> GLUCOSE Bot</div>
-      <p class="muted">Admin panel</p>
-      <label>Password <input type="password" id="password" autocomplete="current-password" required autofocus /></label>
-      <button class="btn primary" type="submit">Log in</button>
+      <p class="muted">Панель управления</p>
+      <label>Пароль <input type="password" id="password" autocomplete="current-password" required autofocus /></label>
+      <button class="btn primary" type="submit">Войти</button>
       <p id="login-error" class="error"></p>
     </form>
   </section>
 
-  <!-- App -->
+  <!-- Приложение -->
   <div id="app" class="hidden">
     <header class="topbar">
       <div class="brand"><span class="dot"></span> GLUCOSE Bot</div>
       <div class="topbar-right">
         <span id="wa-pill" class="pill">WhatsApp…</span>
-        <label class="switch" title="Bot replies to customers">
+        <label class="switch" title="Бот отвечает клиентам">
           <input type="checkbox" id="bot-enabled" />
-          <span>Bot on</span>
+          <span>Бот включён</span>
         </label>
-        <button class="btn ghost" id="logout">Log out</button>
+        <button class="btn ghost" id="logout">Выйти</button>
       </div>
     </header>
 
     <nav class="tabs" id="tabs">
-      <button data-tab="overview" class="active">Overview</button>
-      <button data-tab="chats">Chats</button>
-      <button data-tab="leads">Leads</button>
-      <button data-tab="tuning">Bot tuning</button>
+      <button data-tab="overview" class="active">Обзор</button>
+      <button data-tab="chats">Чаты</button>
+      <button data-tab="leads">Заявки</button>
+      <button data-tab="tuning">Настройка бота</button>
       <button data-tab="whatsapp">WhatsApp</button>
-      <button data-tab="server">Server</button>
+      <button data-tab="server">Сервер</button>
     </nav>
 
     <main>
-      <!-- Overview -->
+      <!-- Обзор -->
       <section data-panel="overview">
         <div class="grid kpis" id="kpis"></div>
         <div class="grid two">
           <div class="card">
-            <h3>Last 14 days</h3>
-            <div class="legend"><span class="sw sw-a"></span>Incoming messages <span class="sw sw-b"></span>New chats</div>
+            <h3>Последние 14 дней</h3>
+            <div class="legend"><span class="sw sw-a"></span>Входящие сообщения <span class="sw sw-b"></span>Новые чаты</div>
             <div id="chart" class="chart"></div>
           </div>
           <div class="card">
-            <h3>Sales funnel</h3>
+            <h3>Воронка продаж</h3>
             <div id="funnel"></div>
           </div>
         </div>
         <div class="card">
-          <h3>Claude usage &amp; cost</h3>
+          <h3>Использование Claude и расходы</h3>
           <div id="costs" class="grid three"></div>
-          <p class="muted small">Estimated from token counts at the configured prices.</p>
+          <p class="muted small">Оценка по количеству токенов и указанным ценам.</p>
         </div>
       </section>
 
-      <!-- Chats -->
+      <!-- Чаты -->
       <section data-panel="chats" class="hidden">
         <div class="chats">
           <div class="card chat-list">
-            <input type="search" id="chat-search" placeholder="Search name or number…" />
+            <input type="search" id="chat-search" placeholder="Поиск по имени или номеру…" />
             <ul id="chat-list"></ul>
           </div>
           <div class="card chat-view" id="chat-view">
-            <p class="muted">Pick a conversation.</p>
+            <p class="muted">Выберите диалог.</p>
           </div>
         </div>
       </section>
 
-      <!-- Leads -->
+      <!-- Заявки -->
       <section data-panel="leads" class="hidden">
         <div class="card">
           <div class="row between">
-            <h3>Leads</h3>
+            <h3>Заявки</h3>
             <div class="row">
-              <select id="lead-filter"><option value="">All stages</option></select>
-              <a class="btn" href="api/leads.csv">Export CSV</a>
+              <select id="lead-filter"><option value="">Все этапы</option></select>
+              <a class="btn" href="/admin/api/leads.csv">Скачать CSV</a>
             </div>
           </div>
           <div class="table-wrap"><table id="leads-table"></table></div>
         </div>
       </section>
 
-      <!-- Tuning -->
+      <!-- Настройка бота -->
       <section data-panel="tuning" class="hidden">
         <div class="grid two">
           <div class="card">
             <div class="row between">
-              <h3>Sales script</h3>
-              <button class="btn primary" id="save-script">Save script</button>
+              <h3>Скрипт продаж</h3>
+              <button class="btn primary" id="save-script">Сохранить скрипт</button>
             </div>
-            <p class="muted small">This is what the bot knows and follows: steps, prices, bonuses. Changes apply to the next message.</p>
+            <p class="muted small">Всё, что бот знает и чему следует: этапы, цены, бонусы. Изменения применяются со следующего сообщения.</p>
             <textarea id="script" spellcheck="false"></textarea>
             <p id="script-status" class="small muted"></p>
           </div>
           <div class="stack">
             <div class="card">
-              <h3>Settings</h3>
+              <h3>Настройки</h3>
               <form id="settings-form" class="form">
-                <label>Reply depth (effort)
+                <label>Глубина ответа (effort)
                   <select id="effort"></select>
-                  <span class="muted small">low = fastest &amp; cheapest; higher = more careful, slower.</span>
+                  <span class="muted small">low — быстрее и дешевле; выше — внимательнее, но медленнее.</span>
                 </label>
-                <label>Kaspi payment link
+                <label>Ссылка на оплату Kaspi
                   <input id="paymentLink" placeholder="https://…" />
                 </label>
-                <label>Manager WhatsApp for alerts
-                  <input id="adminPhone" placeholder="77011234567" inputmode="numeric" />
+                <label>WhatsApp менеджера для уведомлений
+                  <input id="adminPhone" data-phone placeholder="+7 (7XX) XXX-XX-XX" inputmode="tel" autocomplete="off" />
                 </label>
                 <div class="row between">
                   <span class="muted small" id="model-name"></span>
-                  <button class="btn primary" type="submit">Save settings</button>
+                  <button class="btn primary" type="submit">Сохранить настройки</button>
                 </div>
               </form>
             </div>
             <div class="card">
               <div class="row between">
-                <h3>Test chat</h3>
-                <button class="btn ghost" id="test-reset">Clear</button>
+                <h3>Тестовый чат</h3>
+                <button class="btn ghost" id="test-reset">Очистить</button>
               </div>
-              <p class="muted small">Talk to the bot as a student would. Nothing is saved and nobody is messaged.</p>
+              <p class="muted small">Напишите боту как ученик. Ничего не сохраняется, никому ничего не отправляется.</p>
               <div id="test-log" class="bubbles test-log"></div>
               <form id="test-form" class="row">
                 <input id="test-input" placeholder="Сәлеметсіз бе…" autocomplete="off" />
-                <button class="btn primary" type="submit">Send</button>
+                <button class="btn primary" type="submit">Отправить</button>
               </form>
             </div>
           </div>
@@ -143,43 +143,43 @@
       <section data-panel="whatsapp" class="hidden">
         <div class="grid two">
           <div class="card">
-            <h3>Connection</h3>
+            <h3>Подключение</h3>
             <div id="wa-status" class="wa-status"></div>
             <div class="row">
-              <button class="btn primary" id="wa-connect">Connect / show QR</button>
-              <button class="btn" id="wa-restart">Restart session</button>
-              <button class="btn danger" id="wa-logout">Unlink number</button>
+              <button class="btn primary" id="wa-connect">Подключить / показать QR</button>
+              <button class="btn" id="wa-restart">Перезапустить сессию</button>
+              <button class="btn danger" id="wa-logout">Отвязать номер</button>
             </div>
           </div>
           <div class="card">
-            <h3>Link the store's WhatsApp</h3>
-            <div id="wa-qr" class="qr"><p class="muted">Press “Connect / show QR”.</p></div>
+            <h3>Привязка WhatsApp центра</h3>
+            <div id="wa-qr" class="qr"><p class="muted">Нажмите «Подключить / показать QR».</p></div>
             <ol class="small muted">
-              <li>On the store phone open WhatsApp → Settings → Linked devices → Link a device.</li>
-              <li>Scan the QR code above.</li>
+              <li>На телефоне центра откройте WhatsApp → Настройки → Связанные устройства → Привязка устройства.</li>
+              <li>Отсканируйте QR-код выше.</li>
             </ol>
             <details>
-              <summary>Can't scan? Link with a code instead</summary>
+              <summary>Не получается отсканировать? Привязать по коду</summary>
               <form id="pair-form" class="row">
-                <input id="pair-phone" placeholder="Store number, e.g. 77011234567" inputmode="numeric" />
-                <button class="btn" type="submit">Get code</button>
+                <input id="pair-phone" data-phone placeholder="+7 (7XX) XXX-XX-XX" inputmode="tel" autocomplete="off" />
+                <button class="btn" type="submit">Получить код</button>
               </form>
               <p id="pair-code" class="pair-code"></p>
-              <p class="small muted">On the phone: Linked devices → Link a device → “Link with phone number instead”, then type the code.</p>
+              <p class="small muted">На телефоне: Связанные устройства → Привязка устройства → «Привязать по номеру телефона», затем введите код.</p>
             </details>
           </div>
         </div>
       </section>
 
-      <!-- Server -->
+      <!-- Сервер -->
       <section data-panel="server" class="hidden">
         <div class="grid kpis" id="server-kpis"></div>
         <div class="card">
           <div class="row between">
-            <h3>Logs</h3>
+            <h3>Логи</h3>
             <div class="row">
-              <button class="btn" id="logs-refresh">Refresh</button>
-              <button class="btn danger" id="restart-bot">Restart bot</button>
+              <button class="btn" id="logs-refresh">Обновить</button>
+              <button class="btn danger" id="restart-bot">Перезапустить бота</button>
             </div>
           </div>
           <pre id="logs" class="logs"></pre>
@@ -189,6 +189,6 @@
   </div>
 
   <div id="toast" class="toast hidden"></div>
-  <script src="app.js"></script>
+  <script src="/admin/app.js"></script>
 </body>
 </html>

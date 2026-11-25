@@ -85,7 +85,7 @@ function csvEscape(v: unknown): string {
 export function mountAdmin(app: Express, wa: WhatsAppClient, notifyHuman: (s: string) => Promise<void>): void {
   if (!config.ADMIN_PASSWORD) {
     console.warn("[admin] ADMIN_PASSWORD is not set: the admin panel is disabled.");
-    app.get("/admin", (_req, res) => res.status(503).send("Admin panel disabled: set ADMIN_PASSWORD in .env"));
+    app.get("/admin", (_req, res) => res.status(503).send("Панель отключена: задайте ADMIN_PASSWORD в .env"));
     return;
   }
 
@@ -94,6 +94,10 @@ export function mountAdmin(app: Express, wa: WhatsAppClient, notifyHuman: (s: st
 
   const api = express.Router();
   app.use("/admin/api", api);
+
+  // Panel pages: /admin/chats, /admin/chats/<id>, /admin/leads?stage=..., etc. all load the same app.
+  const PAGES = /^\/admin(\/(overview|chats|leads|tuning|whatsapp|server)(\/[^/]*)?)?\/?$/;
+  app.get(PAGES, (_req, res) => res.sendFile("index.html", { root: "public/admin" }));
 
   api.post("/login", login);
   api.post("/logout", logout);
@@ -119,7 +123,7 @@ export function mountAdmin(app: Express, wa: WhatsAppClient, notifyHuman: (s: st
     h(async (req) => {
       const chatId = String(req.params.id);
       const text = String(req.body?.text ?? "").trim();
-      if (!text) throw new Error("Empty message");
+      if (!text) throw new Error("Пустое сообщение");
       await wa.sendText(chatId, text);
       logMessage(chatId, "manual", text);
       // A human answered: stop the bot in this chat until someone turns it back on.
@@ -133,7 +137,7 @@ export function mountAdmin(app: Express, wa: WhatsAppClient, notifyHuman: (s: st
     "/leads/:id/stage",
     h((req) => {
       const stage = String(req.body?.stage) as LeadStage;
-      if (!LEAD_STAGES.includes(stage)) throw new Error("Unknown stage");
+      if (!LEAD_STAGES.includes(stage)) throw new Error("Неизвестный этап");
       return upsertLead(String(req.params.id), { stage }).after;
     }),
   );
@@ -154,7 +158,7 @@ export function mountAdmin(app: Express, wa: WhatsAppClient, notifyHuman: (s: st
     "/script",
     h((req) => {
       const script = String(req.body?.script ?? "");
-      if (script.trim().length < 20) throw new Error("Script is too short");
+      if (script.trim().length < 20) throw new Error("Скрипт слишком короткий");
       writeScript(script);
       console.log("[admin] sales script updated");
     }),
@@ -164,7 +168,7 @@ export function mountAdmin(app: Express, wa: WhatsAppClient, notifyHuman: (s: st
     "/settings",
     h((req) => {
       const b = req.body ?? {};
-      if (b.effort !== undefined && !EFFORTS.includes(b.effort)) throw new Error("Unknown effort");
+      if (b.effort !== undefined && !EFFORTS.includes(b.effort)) throw new Error("Неизвестное значение effort");
       const s = updateSettings({
         botEnabled: b.botEnabled === undefined ? undefined : Boolean(b.botEnabled),
         effort: b.effort as Effort | undefined,

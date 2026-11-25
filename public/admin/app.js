@@ -4,29 +4,29 @@ const esc = (s) =>
   String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
 
 const STAGE_LABELS = {
-  new: "New",
-  qualifying: "Qualifying",
-  presented: "Presented",
-  price_sent: "Price sent",
-  ready_to_pay: "Ready to pay",
-  parent_call: "Parent call",
-  paid: "Paid",
-  not_interested: "Not interested",
+  new: "Новая",
+  qualifying: "Выявление потребностей",
+  presented: "Презентация",
+  price_sent: "Озвучена цена",
+  ready_to_pay: "Готов оплатить",
+  parent_call: "Звонок родителям",
+  paid: "Оплачено",
+  not_interested: "Не интересно",
 };
 const HOT = new Set(["ready_to_pay", "parent_call", "paid"]);
 
 async function api(path, opts = {}) {
-  const res = await fetch(`api/${path}`, {
+  const res = await fetch(`/admin/api/${path}`, {
     method: opts.method ?? "GET",
     headers: opts.body ? { "Content-Type": "application/json" } : {},
     body: opts.body ? JSON.stringify(opts.body) : undefined,
   });
   if (res.status === 401 && path !== "login") {
     showLogin();
-    throw new Error("Not logged in");
+    throw new Error("Требуется вход");
   }
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(data.error || `Request failed (${res.status})`);
+  if (!res.ok) throw new Error(data.error || `Ошибка запроса (${res.status})`);
   return data;
 }
 
@@ -38,14 +38,60 @@ function toast(msg) {
   toast.timer = setTimeout(() => t.classList.add("hidden"), 2800);
 }
 
-const phone = (chatId) => "+" + String(chatId).split("@")[0];
-const time = (iso) => (iso ? new Date(iso).toLocaleString([], { dateStyle: "short", timeStyle: "short" }) : "");
+// ---------- phone mask: +7 (7XX) XXX-XX-XX ----------
+/** Format digits as a Kazakhstan number, as far as they go. 8XXXXXXXXXX is treated as 7XXXXXXXXXX. */
+function formatPhone(value) {
+  let d = String(value ?? "").replace(/\D/g, "");
+  if (!d) return "";
+  if (d[0] === "8") d = "7" + d.slice(1);
+  if (d[0] !== "7") d = "7" + d;
+  d = d.slice(0, 11);
+  const p = [d.slice(1, 4), d.slice(4, 7), d.slice(7, 9), d.slice(9, 11)];
+  let out = "+7";
+  if (p[0]) out += ` (${p[0]}${p[0].length === 3 ? ")" : ""}`;
+  if (p[1]) out += ` ${p[1]}`;
+  if (p[2]) out += `-${p[2]}`;
+  if (p[3]) out += `-${p[3]}`;
+  return out;
+}
+const phoneDigits = (value) => {
+  const d = String(value ?? "").replace(/\D/g, "");
+  return d[0] === "8" ? "7" + d.slice(1) : d;
+};
+const isFullPhone = (value) => /^7\d{10}$/.test(phoneDigits(value));
+
+function maskPhoneInput(input) {
+  input.addEventListener("input", (e) => {
+    // Let backspace remove a digit even when it lands on a formatting character.
+    const deleting = e.inputType?.startsWith("delete");
+    let digits = phoneDigits(input.value);
+    if (deleting && formatPhone(digits) === input.value + ")") digits = digits.slice(0, -1);
+    // Typed "8 701…" after the "+7 (" prefix: Kazakh codes never start with 8, so drop it.
+    if (!deleting && digits[1] === "8") digits = "7" + digits.slice(2);
+    input.value = formatPhone(digits);
+  });
+  input.addEventListener("focus", () => {
+    if (!input.value) input.value = "+7 (";
+    // Put the cursor after the prefix (a click would otherwise place it inside "+7 (").
+    setTimeout(() => input.setSelectionRange(input.value.length, input.value.length));
+  });
+  input.addEventListener("blur", () => {
+    if (phoneDigits(input.value).length <= 1) input.value = "";
+  });
+}
+document.querySelectorAll("input[data-phone]").forEach(maskPhoneInput);
+
+const phone = (chatId) => {
+  const d = String(chatId).split("@")[0];
+  return /^7\d{10}$/.test(d) ? formatPhone(d) : "+" + d;
+};
+const time = (iso) => (iso ? new Date(iso).toLocaleString("ru-RU", { dateStyle: "short", timeStyle: "short" }) : "");
 const money = (n) => "$" + (n ?? 0).toFixed(2);
-const num = (n) => (n ?? 0).toLocaleString();
-const bytes = (n) => (n / 1024 ** 3).toFixed(1) + " GB";
+const num = (n) => (n ?? 0).toLocaleString("ru-RU");
+const bytes = (n) => (n / 1024 ** 3).toFixed(1) + " ГБ";
 const duration = (s) => {
   const d = Math.floor(s / 86400), h = Math.floor((s % 86400) / 3600), m = Math.floor((s % 3600) / 60);
-  return d ? `${d}d ${h}h` : h ? `${h}h ${m}m` : `${m}m`;
+  return d ? `${d} д ${h} ч` : h ? `${h} ч ${m} мин` : `${m} мин`;
 };
 
 // ---------- auth ----------
@@ -75,16 +121,64 @@ $("#logout").addEventListener("click", async () => {
   showLogin();
 });
 
-// ---------- tabs ----------
+// ---------- routing ----------
+// URLs: /admin/overview, /admin/chats, /admin/chats/<chat id>, /admin/leads?stage=<stage>,
+//       /admin/tuning, /admin/whatsapp, /admin/server
+const TABS = ["overview", "chats", "leads", "tuning", "whatsapp", "server"];
+const TAB_TITLES = { overview: "Обзор", chats: "Чаты", leads: "Заявки", tuning: "Настройка бота", whatsapp: "WhatsApp", server: "Сервер" };
+const BASE = "/admin";
 let currentTab = "overview";
 const loaders = {};
+
+const chatPath = (id) => encodeURIComponent(id).replace(/%40/g, "@");
+
+function parseRoute() {
+  const parts = location.pathname.slice(BASE.length).split("/").filter(Boolean);
+  const tab = TABS.includes(parts[0]) ? parts[0] : "overview";
+  return {
+    tab,
+    chatId: tab === "chats" && parts[1] ? decodeURIComponent(parts[1]) : null,
+    stage: new URLSearchParams(location.search).get("stage") ?? "",
+  };
+}
+
+/** Change the URL (adds a browser history entry) and show the matching page. */
+function navigate(path, { replace = false } = {}) {
+  const url = `${BASE}/${path}`;
+  if (url !== location.pathname + location.search) history[replace ? "replaceState" : "pushState"](null, "", url);
+  applyRoute();
+}
+
+function applyRoute() {
+  const r = parseRoute();
+  const tabChanged = r.tab !== currentTab;
+  currentTab = r.tab;
+  document.querySelectorAll("#tabs button").forEach((b) => b.classList.toggle("active", b.dataset.tab === r.tab));
+  document.querySelectorAll("[data-panel]").forEach((p) => p.classList.toggle("hidden", p.dataset.panel !== r.tab));
+  document.title = `${TAB_TITLES[r.tab]} — GLUCOSE Bot`;
+
+  if (r.tab === "chats") {
+    if (r.chatId !== openChatId) {
+      openChatId = r.chatId;
+      if (!r.chatId) $("#chat-view").innerHTML = '<p class="muted">Выберите диалог.</p>';
+    }
+    loaders.chats();
+  } else if (r.tab === "leads") {
+    $("#lead-filter").value = r.stage;
+    loaders.leads();
+  } else if (tabChanged || !loaded.has(r.tab)) {
+    loaders[r.tab]?.();
+  }
+  loaded.add(r.tab);
+}
+const loaded = new Set();
+
+window.addEventListener("popstate", applyRoute);
 $("#tabs").addEventListener("click", (e) => {
   const tab = e.target.dataset?.tab;
   if (!tab) return;
-  currentTab = tab;
-  document.querySelectorAll("#tabs button").forEach((b) => b.classList.toggle("active", b.dataset.tab === tab));
-  document.querySelectorAll("[data-panel]").forEach((p) => p.classList.toggle("hidden", p.dataset.panel !== tab));
-  loaders[tab]?.();
+  if (tab === "chats" && openChatId && currentTab !== "chats") return navigate(`chats/${chatPath(openChatId)}`);
+  navigate(tab === "leads" && $("#lead-filter").value ? `leads?stage=${$("#lead-filter").value}` : tab);
 });
 
 // ---------- header: WhatsApp pill + bot switch ----------
@@ -92,8 +186,8 @@ async function refreshHeader() {
   try {
     const s = await api("whatsapp");
     const pill = $("#wa-pill");
-    const map = { CONNECTED: ["WhatsApp connected", "ok"], SCAN_QR_CODE: ["WhatsApp: scan QR", "warn"], STARTING: ["WhatsApp starting…", "warn"] };
-    const [text, cls] = map[s.status] ?? [`WhatsApp ${s.status.toLowerCase()}`, "bad"];
+    const map = { CONNECTED: ["WhatsApp подключён", "ok"], SCAN_QR_CODE: ["WhatsApp: отсканируйте QR", "warn"], STARTING: ["WhatsApp запускается…", "warn"] };
+    const [text, cls] = map[s.status] ?? [s.status === "STOPPED" ? "WhatsApp не подключён" : "WhatsApp: ошибка", "bad"];
     pill.textContent = text;
     pill.className = `pill ${cls}`;
   } catch {}
@@ -101,7 +195,7 @@ async function refreshHeader() {
 $("#bot-enabled").addEventListener("change", async (e) => {
   try {
     await api("settings", { method: "PUT", body: { botEnabled: e.target.checked } });
-    toast(e.target.checked ? "Bot is replying to customers" : "Bot paused: no automatic replies");
+    toast(e.target.checked ? "Бот отвечает клиентам" : "Бот на паузе: автоответы отключены");
   } catch (err) {
     toast(err.message);
     e.target.checked = !e.target.checked;
@@ -114,11 +208,11 @@ loaders.overview = async () => {
   const t = s.totals;
   const conv = t.leads ? Math.round((t.readyToPay / t.leads) * 100) : 0;
   $("#kpis").innerHTML = [
-    ["Messages today", num(t.messagesToday), `${num(t.newChatsToday)} new chats today`],
-    ["Conversations", num(t.chats), `${num(t.paused)} handled by a manager`],
-    ["Leads", num(t.leads), "with saved details"],
-    ["Ready to pay / paid", num(t.readyToPay), `${conv}% of leads`],
-    ["Claude cost today", money(s.cost.today.usd), `${money(s.cost.month.usd)} last 30 days`],
+    ["Сообщений сегодня", num(t.messagesToday), `новых чатов сегодня: ${num(t.newChatsToday)}`],
+    ["Диалоги", num(t.chats), `ведёт менеджер: ${num(t.paused)}`],
+    ["Заявки", num(t.leads), "с сохранёнными данными"],
+    ["Готовы оплатить / оплатили", num(t.readyToPay), `${conv}% от заявок`],
+    ["Расход Claude сегодня", money(s.cost.today.usd), `${money(s.cost.month.usd)} за 30 дней`],
   ]
     .map(([l, v, sub]) => `<div class="card kpi"><div class="label">${l}</div><div class="value">${v}</div><div class="sub">${sub}</div></div>`)
     .join("");
@@ -126,7 +220,7 @@ loaders.overview = async () => {
   const max = Math.max(1, ...s.daily.map((d) => Math.max(d.incoming, d.new_chats)));
   $("#chart").innerHTML = s.daily
     .map(
-      (d) => `<div class="col" title="${d.day}: ${d.incoming} messages, ${d.new_chats} new chats, ${d.ready} ready to pay, ${money(d.cost)}">
+      (d) => `<div class="col" title="${d.day}: сообщений ${d.incoming}, новых чатов ${d.new_chats}, готовы оплатить ${d.ready}, ${money(d.cost)}">
         <div class="bars"><div class="bar a" style="height:${(d.incoming / max) * 100}%"></div><div class="bar b" style="height:${(d.new_chats / max) * 100}%"></div></div>
         <div class="day">${d.day.slice(8)}</div></div>`,
     )
@@ -141,13 +235,13 @@ loaders.overview = async () => {
     .join("");
 
   $("#costs").innerHTML = [
-    ["Today", s.cost.today],
-    ["Last 7 days", s.cost.week],
-    ["Last 30 days", s.cost.month],
+    ["Сегодня", s.cost.today],
+    ["За 7 дней", s.cost.week],
+    ["За 30 дней", s.cost.month],
   ]
     .map(
       ([l, c]) => `<div class="kpi"><div class="label">${l}</div><div class="value">${money(c.usd)}</div>
-        <div class="sub">${num(c.calls)} calls · ${num(c.input)} in / ${num(c.output)} out tokens · ${num(c.cache_read)} cached</div></div>`,
+        <div class="sub">запросов: ${num(c.calls)} · токенов: ${num(c.input)} вход / ${num(c.output)} выход · из кэша: ${num(c.cache_read)}</div></div>`,
     )
     .join("");
 };
@@ -162,7 +256,7 @@ function renderChatList() {
     .filter((c) => !q || `${c.lead_name ?? ""} ${c.name ?? ""} ${c.chat_id}`.toLowerCase().includes(q))
     .map((c) => {
       const tags = [
-        c.paused ? '<span class="tag paused">Manager</span>' : "",
+        c.paused ? '<span class="tag paused">Менеджер</span>' : "",
         c.stage ? `<span class="tag ${HOT.has(c.stage) ? "hot" : ""}">${esc(STAGE_LABELS[c.stage] ?? c.stage)}</span>` : "",
       ].join(" ");
       return `<li data-id="${esc(c.chat_id)}" class="${c.chat_id === openChatId ? "active" : ""}">
@@ -170,7 +264,7 @@ function renderChatList() {
         <div class="preview">${c.last_direction !== "in" ? "↪ " : ""}${esc(c.last_text)}</div>
         <div class="preview">${esc(phone(c.chat_id))} · ${time(c.last_message_at)}</div></li>`;
     })
-    .join("") || '<li class="muted">No conversations yet.</li>';
+    .join("") || '<li class="muted">Пока нет диалогов.</li>';
 }
 
 loaders.chats = async () => {
@@ -181,7 +275,7 @@ loaders.chats = async () => {
 $("#chat-search").addEventListener("input", renderChatList);
 $("#chat-list").addEventListener("click", (e) => {
   const li = e.target.closest("li[data-id]");
-  if (li) openChat(li.dataset.id);
+  if (li) navigate(`chats/${chatPath(li.dataset.id)}`);
 });
 
 async function openChat(id, keepScroll = false) {
@@ -190,7 +284,8 @@ async function openChat(id, keepScroll = false) {
   const [{ chat, messages }, leads] = await Promise.all([api(`chats/${encodeURIComponent(id)}/messages`), api("leads")]);
   const lead = leads.find((l) => l.chatId === id);
   const view = $("#chat-view");
-  const prevScroll = view.querySelector(".bubbles")?.scrollTop;
+  const prevScroll = keepScroll && view.dataset.chat === id ? view.querySelector(".bubbles")?.scrollTop : null;
+  view.dataset.chat = id;
   const leadBits = lead
     ? [
         lead.name && `👤 ${lead.name}`,
@@ -206,34 +301,34 @@ async function openChat(id, keepScroll = false) {
     <div class="chat-head">
       <div><strong>${esc(lead?.name || chat?.name || phone(id))}</strong> <span class="muted">${esc(phone(id))}</span></div>
       <div class="row">
-        <button class="btn" id="chat-pause">${chat?.paused ? "▶ Let bot reply" : "⏸ Take over (pause bot)"}</button>
-        <button class="btn ghost" id="chat-reset" title="The bot forgets this conversation (messages stay here)">Reset bot memory</button>
+        <button class="btn" id="chat-pause">${chat?.paused ? "▶ Вернуть бота" : "⏸ Взять диалог (пауза бота)"}</button>
+        <button class="btn ghost" id="chat-reset" title="Бот забудет этот диалог (сообщения останутся здесь)">Сбросить память бота</button>
       </div>
     </div>
     ${leadBits.length ? `<div class="lead-box">${leadBits.map(esc).join(" · ")}</div>` : ""}
     <div class="bubbles">${messages
       .map(
         (m) => `<div class="bubble ${m.direction}">${esc(m.text)}<div class="meta">${
-          m.direction === "in" ? "Student" : m.direction === "out" ? "Bot" : "Manager"
+          m.direction === "in" ? "Ученик" : m.direction === "out" ? "Бот" : "Менеджер"
         } · ${time(m.created_at)}</div></div>`,
       )
       .join("")}</div>
     <form id="chat-send" class="row">
-      <input id="chat-text" placeholder="Write as the manager… (pauses the bot in this chat)" autocomplete="off" />
-      <button class="btn primary" type="submit">Send</button>
+      <input id="chat-text" placeholder="Написать от менеджера… (бот в этом чате встанет на паузу)" autocomplete="off" />
+      <button class="btn primary" type="submit">Отправить</button>
     </form>`;
   const bubbles = view.querySelector(".bubbles");
   bubbles.scrollTop = keepScroll && prevScroll != null ? prevScroll : bubbles.scrollHeight;
 
   $("#chat-pause").onclick = async () => {
     await api(`chats/${encodeURIComponent(id)}/pause`, { method: "POST", body: { paused: !chat?.paused } });
-    toast(chat?.paused ? "Bot will reply in this chat again" : "Bot paused in this chat");
+    toast(chat?.paused ? "Бот снова отвечает в этом чате" : "Бот на паузе в этом чате");
     loaders.chats();
   };
   $("#chat-reset").onclick = async () => {
-    if (!confirm("The bot will forget this conversation and start over with the next message. Continue?")) return;
+    if (!confirm("Бот забудет этот диалог и начнёт заново со следующего сообщения. Продолжить?")) return;
     await api(`chats/${encodeURIComponent(id)}/reset`, { method: "POST" });
-    toast("Bot memory reset for this chat");
+    toast("Память бота для этого чата сброшена");
   };
   $("#chat-send").onsubmit = async (e) => {
     e.preventDefault();
@@ -251,7 +346,11 @@ async function openChat(id, keepScroll = false) {
 // ---------- leads ----------
 let leads = [];
 $("#lead-filter").innerHTML += Object.entries(STAGE_LABELS).map(([k, v]) => `<option value="${k}">${v}</option>`).join("");
-$("#lead-filter").addEventListener("change", renderLeads);
+$("#lead-filter").addEventListener("change", () => {
+  const stage = $("#lead-filter").value;
+  history.replaceState(null, "", stage ? `${BASE}/leads?stage=${stage}` : `${BASE}/leads`);
+  renderLeads();
+});
 
 function renderLeads() {
   const f = $("#lead-filter").value;
@@ -261,7 +360,7 @@ function renderLeads() {
       .map(([k, v]) => `<option value="${k}" ${k === l.stage ? "selected" : ""}>${v}</option>`)
       .join("")}</select>`;
   $("#leads-table").innerHTML = `
-    <tr><th>Name</th><th>Phone</th><th>Grade</th><th>Subjects</th><th>Specialty</th><th>Target</th><th>Parent phone</th><th>Payment</th><th>Stage</th><th>Updated</th></tr>
+    <tr><th>Имя</th><th>Телефон</th><th>Класс</th><th>Предметы</th><th>Специальность</th><th>Цель (балл)</th><th>Телефон родителя</th><th>Оплата</th><th>Этап</th><th>Обновлено</th></tr>
     ${rows
       .map(
         (l) => `<tr>
@@ -269,14 +368,14 @@ function renderLeads() {
           <td>${esc(l.subjects)}</td><td>${esc(l.specialty)}</td><td>${esc(l.targetScore)}</td>
           <td>${esc(l.parentPhone)}</td><td>${esc(l.paymentPreference)}</td><td>${stageSelect(l)}</td><td>${time(l.updatedAt)}</td></tr>`,
       )
-      .join("") || '<tr><td colspan="10" class="muted">No leads yet.</td></tr>'}`;
+      .join("") || '<tr><td colspan="10" class="muted">Пока нет заявок.</td></tr>'}`;
 }
 $("#leads-table").addEventListener("change", async (e) => {
   const id = e.target.dataset?.lead;
   if (!id) return;
   try {
     await api(`leads/${encodeURIComponent(id)}/stage`, { method: "POST", body: { stage: e.target.value } });
-    toast("Stage updated");
+    toast("Этап обновлён");
   } catch (err) {
     toast(err.message);
   }
@@ -293,27 +392,28 @@ loaders.tuning = async () => {
   $("#script-status").textContent = "";
   $("#effort").innerHTML = efforts.map((e) => `<option ${e === settings.effort ? "selected" : ""}>${e}</option>`).join("");
   $("#paymentLink").value = settings.paymentLink;
-  $("#adminPhone").value = settings.adminPhone;
-  $("#model-name").textContent = `Model: ${model}`;
+  $("#adminPhone").value = formatPhone(settings.adminPhone);
+  $("#model-name").textContent = `Модель: ${model}`;
 };
-$("#script").addEventListener("input", () => ($("#script-status").textContent = "Unsaved changes"));
+$("#script").addEventListener("input", () => ($("#script-status").textContent = "Есть несохранённые изменения"));
 $("#save-script").addEventListener("click", async () => {
   try {
     await api("script", { method: "PUT", body: { script: $("#script").value } });
-    $("#script-status").textContent = `Saved ${new Date().toLocaleTimeString()}`;
-    toast("Script saved: the bot uses it from the next message");
+    $("#script-status").textContent = `Сохранено в ${new Date().toLocaleTimeString("ru-RU")}`;
+    toast("Скрипт сохранён: бот использует его со следующего сообщения");
   } catch (err) {
     toast(err.message);
   }
 });
 $("#settings-form").addEventListener("submit", async (e) => {
   e.preventDefault();
+  if ($("#adminPhone").value && !isFullPhone($("#adminPhone").value)) return toast("Введите номер менеджера полностью: +7 (7XX) XXX-XX-XX");
   try {
     await api("settings", {
       method: "PUT",
-      body: { effort: $("#effort").value, paymentLink: $("#paymentLink").value, adminPhone: $("#adminPhone").value },
+      body: { effort: $("#effort").value, paymentLink: $("#paymentLink").value, adminPhone: phoneDigits($("#adminPhone").value) },
     });
-    toast("Settings saved");
+    toast("Настройки сохранены");
   } catch (err) {
     toast(err.message);
   }
@@ -324,7 +424,7 @@ function renderTest() {
   const log = $("#test-log");
   log.innerHTML = testHistory
     .map((t) => `<div class="bubble ${t.role === "user" ? "in" : "out"}">${esc(t.text)}</div>`)
-    .join("") || '<p class="muted small">Start by greeting the bot like a student would.</p>';
+    .join("") || '<p class="muted small">Начните с приветствия, как написал бы ученик.</p>';
   log.scrollTop = log.scrollHeight;
 }
 $("#test-form").addEventListener("submit", async (e) => {
@@ -339,12 +439,12 @@ $("#test-form").addEventListener("submit", async (e) => {
   btn.textContent = "…";
   try {
     const { reply } = await api("test", { method: "POST", body: { history: testHistory } });
-    testHistory.push({ role: "assistant", text: reply || "(no reply)" });
+    testHistory.push({ role: "assistant", text: reply || "(нет ответа)" });
   } catch (err) {
     testHistory.push({ role: "assistant", text: `⚠️ ${err.message}` });
   } finally {
     btn.disabled = false;
-    btn.textContent = "Send";
+    btn.textContent = "Отправить";
     renderTest();
   }
 });
@@ -359,11 +459,11 @@ let qrTimer = null;
 async function refreshWhatsApp() {
   const s = await api("whatsapp");
   const labels = {
-    CONNECTED: "✅ Connected",
-    SCAN_QR_CODE: "📷 Waiting for QR scan",
-    STARTING: "⏳ Starting…",
-    STOPPED: "⏹ Not connected",
-    FAILED: "❌ Failed",
+    CONNECTED: "✅ Подключён",
+    SCAN_QR_CODE: "📷 Ожидает сканирования QR",
+    STARTING: "⏳ Запускается…",
+    STOPPED: "⏹ Не подключён",
+    FAILED: "❌ Ошибка",
   };
   const me = s.me?.id ? ` — ${esc(s.me.pushName ?? "")} ${esc(phone(s.me.id.replace(/:\d+/, "")))}` : "";
   $("#wa-status").innerHTML = `<strong>${labels[s.status] ?? s.status}</strong>${me}${
@@ -371,9 +471,9 @@ async function refreshWhatsApp() {
   }`;
   if (s.status === "SCAN_QR_CODE") {
     const { qr } = await api("whatsapp/qr");
-    $("#wa-qr").innerHTML = qr ? `<img alt="WhatsApp QR code" src="${qr}" />` : '<p class="muted">Loading QR…</p>';
+    $("#wa-qr").innerHTML = qr ? `<img alt="QR-код WhatsApp" src="${qr}" />` : '<p class="muted">Загрузка QR…</p>';
   } else if (s.status === "CONNECTED") {
-    $("#wa-qr").innerHTML = '<p class="muted">✅ The number is linked. Nothing to scan.</p>';
+    $("#wa-qr").innerHTML = '<p class="muted">✅ Номер привязан. Сканировать ничего не нужно.</p>';
   }
   refreshHeader();
   return s;
@@ -392,7 +492,7 @@ loaders.whatsapp = async () => {
 $("#wa-connect").addEventListener("click", async () => {
   try {
     await api("whatsapp/connect", { method: "POST" });
-    toast("Starting session… the QR appears in a few seconds");
+    toast("Запуск сессии… QR появится через несколько секунд");
     pollWhatsApp();
     setTimeout(refreshWhatsApp, 1500);
   } catch (err) {
@@ -402,17 +502,17 @@ $("#wa-connect").addEventListener("click", async () => {
 $("#wa-restart").addEventListener("click", async () => {
   try {
     await api("whatsapp/restart", { method: "POST" });
-    toast("Session restarting");
+    toast("Сессия перезапускается");
     pollWhatsApp();
   } catch (err) {
     toast(err.message);
   }
 });
 $("#wa-logout").addEventListener("click", async () => {
-  if (!confirm("Unlink the store's WhatsApp number from the bot? You will need to scan a QR again.")) return;
+  if (!confirm("Отвязать номер WhatsApp от бота? Потом нужно будет снова сканировать QR.")) return;
   try {
     await api("whatsapp/logout", { method: "POST" });
-    toast("Number unlinked");
+    toast("Номер отвязан");
     refreshWhatsApp();
   } catch (err) {
     toast(err.message);
@@ -421,7 +521,8 @@ $("#wa-logout").addEventListener("click", async () => {
 $("#pair-form").addEventListener("submit", async (e) => {
   e.preventDefault();
   try {
-    const { code } = await api("whatsapp/pairing-code", { method: "POST", body: { phone: $("#pair-phone").value } });
+    if (!isFullPhone($("#pair-phone").value)) return toast("Введите номер полностью: +7 (7XX) XXX-XX-XX");
+    const { code } = await api("whatsapp/pairing-code", { method: "POST", body: { phone: phoneDigits($("#pair-phone").value) } });
     $("#pair-code").textContent = code;
   } catch (err) {
     toast(err.message);
@@ -434,11 +535,11 @@ loaders.server = async () => {
   const memUsed = s.memory.total - s.memory.free;
   const diskUsed = s.disk.total - s.disk.free;
   $("#server-kpis").innerHTML = [
-    ["Bot uptime", duration(s.uptimeSec), `server up ${duration(s.hostUptimeSec)}`],
-    ["CPU load", s.load[0].toFixed(2), `${s.cpus} cores · 5m ${s.load[1].toFixed(2)}`],
-    ["Memory", `${Math.round((memUsed / s.memory.total) * 100)}%`, `${bytes(memUsed)} of ${bytes(s.memory.total)} · bot ${Math.round(s.memory.process / 1048576)} MB`],
-    ["Disk", `${Math.round((diskUsed / s.disk.total) * 100)}%`, `${bytes(s.disk.free)} free of ${bytes(s.disk.total)}`],
-    ["Setup", s.provider.toUpperCase(), `${esc(s.model)} · Node ${esc(s.node)}`],
+    ["Бот работает", duration(s.uptimeSec), `сервер: ${duration(s.hostUptimeSec)}`],
+    ["Нагрузка CPU", s.load[0].toFixed(2), `ядер: ${s.cpus} · за 5 мин ${s.load[1].toFixed(2)}`],
+    ["Память", `${Math.round((memUsed / s.memory.total) * 100)}%`, `${bytes(memUsed)} из ${bytes(s.memory.total)} · бот ${Math.round(s.memory.process / 1048576)} МБ`],
+    ["Диск", `${Math.round((diskUsed / s.disk.total) * 100)}%`, `свободно ${bytes(s.disk.free)} из ${bytes(s.disk.total)}`],
+    ["Конфигурация", s.provider.toUpperCase(), `${esc(s.model)} · Node ${esc(s.node)}`],
   ]
     .map(([l, v, sub]) => `<div class="card kpi"><div class="label">${l}</div><div class="value">${v}</div><div class="sub">${sub}</div></div>`)
     .join("");
@@ -447,14 +548,14 @@ loaders.server = async () => {
 async function loadLogs() {
   const { lines } = await api("logs");
   const pre = $("#logs");
-  pre.textContent = lines.join("\n") || "No logs yet.";
+  pre.textContent = lines.join("\n") || "Логов пока нет.";
   pre.scrollTop = pre.scrollHeight;
 }
 $("#logs-refresh").addEventListener("click", loadLogs);
 $("#restart-bot").addEventListener("click", async () => {
-  if (!confirm("Restart the bot? It will be offline for a few seconds.")) return;
+  if (!confirm("Перезапустить бота? Он будет недоступен несколько секунд.")) return;
   await api("restart", { method: "POST" }).catch(() => {});
-  toast("Restarting… reload the page in ~10 seconds");
+  toast("Перезапуск… обновите страницу через ~10 секунд");
 });
 
 // ---------- start ----------
@@ -465,9 +566,11 @@ async function start() {
   const { settings } = await api("settings");
   $("#bot-enabled").checked = settings.botEnabled;
   refreshHeader();
-  loaders[currentTab]();
-  setInterval(() => {
-    if (document.hidden) return;
+  currentTab = null; // force the first page load
+  applyRoute();
+  if (start.timer) return;
+  start.timer = setInterval(() => {
+    if (document.hidden || $("#app").classList.contains("hidden")) return;
     refreshHeader();
     if (currentTab === "overview" || currentTab === "chats") loaders[currentTab]().catch(() => {});
   }, 15000);

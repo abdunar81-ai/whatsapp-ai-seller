@@ -38,13 +38,13 @@ export function login(req: Request, res: Response): void {
   const ip = req.ip ?? "?";
   const f = failures.get(ip);
   if (f && f.until > Date.now() && f.count >= 5) {
-    res.status(429).json({ error: "Too many attempts. Try again in 15 minutes." });
+    res.status(429).json({ error: "Слишком много попыток. Попробуйте через 15 минут." });
     return;
   }
   const password = String(req.body?.password ?? "");
   if (!config.ADMIN_PASSWORD || !safeEqual(password, config.ADMIN_PASSWORD)) {
     failures.set(ip, { count: (f && f.until > Date.now() ? f.count : 0) + 1, until: Date.now() + 15 * 60_000 });
-    setTimeout(() => res.status(401).json({ error: "Wrong password" }), 800);
+    setTimeout(() => res.status(401).json({ error: "Неверный пароль" }), 800);
     return;
   }
   failures.delete(ip);
@@ -64,5 +64,5 @@ export function logout(_req: Request, res: Response): void {
 
 export function requireAuth(req: Request, res: Response, next: NextFunction): void {
   if (isAuthed(req)) return next();
-  res.status(401).json({ error: "Not logged in" });
+  res.status(401).json({ error: "Требуется вход" });
 }
