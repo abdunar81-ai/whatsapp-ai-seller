@@ -1,7 +1,6 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { betaZodTool } from "@anthropic-ai/sdk/helpers/beta/zod";
 import { z } from "zod/v4";
-import { config } from "../config.js";
 import { LEAD_STAGES, upsertLead } from "../store/leads.js";
 import { getSettings, readScript } from "../store/settings.js";
 import { recordUsage } from "../store/usage.js";
@@ -108,15 +107,19 @@ export async function replyToCustomer(ctx: SellerContext, history: Turn[]): Prom
   while (messages.length > 0 && messages[0]!.role !== "user") messages.shift();
   if (messages.length === 0) return "";
 
+  // Haiku has no server-side fallback (a fallbacks list is rejected), so only send it for Sonnet/Opus.
+  const fallback = settings.model.startsWith("claude-haiku")
+    ? {}
+    : { betas: ["server-side-fallback-2026-07-01"], fallbacks: "default" as const };
+
   const runner = client.beta.messages.toolRunner({
-    model: config.CLAUDE_MODEL,
+    model: settings.model,
     max_tokens: 16000,
     system: buildSystemPrompt(readScript(), settings.paymentLink),
     cache_control: { type: "ephemeral" },
     output_config: { effort: settings.effort },
     // If a safety classifier declines, retry on Anthropic's recommended fallback model.
-    betas: ["server-side-fallback-2026-07-01"],
-    fallbacks: "default",
+    ...fallback,
     tools: buildTools(ctx),
     max_iterations: 8,
     messages,

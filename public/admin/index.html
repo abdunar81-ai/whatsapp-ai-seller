@@ -107,6 +107,10 @@
             <div class="card">
               <h3>Настройки</h3>
               <form id="settings-form" class="form">
+                <label>Модель
+                  <select id="model"></select>
+                  <span class="muted small">Haiku — самая дешёвая и быстрая; Sonnet — баланс; Opus — самая умная и дорогая. Сравните в тестовом чате.</span>
+                </label>
                 <label>Глубина ответа (effort)
                   <select id="effort"></select>
                   <span class="muted small">low — быстрее и дешевле; выше — внимательнее, но медленнее.</span>
@@ -118,7 +122,7 @@
                   <input id="adminPhone" data-phone placeholder="+7 (7XX) XXX-XX-XX" inputmode="tel" autocomplete="off" />
                 </label>
                 <div class="row between">
-                  <span class="muted small" id="model-name"></span>
+                  <span></span>
                   <button class="btn primary" type="submit">Сохранить настройки</button>
                 </div>
               </form>

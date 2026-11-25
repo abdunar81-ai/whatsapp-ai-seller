@@ -13,6 +13,11 @@ const STAGE_LABELS = {
   paid: "Оплачено",
   not_interested: "Не интересно",
 };
+const MODEL_LABELS = {
+  "claude-haiku-5-5": "Claude Haiku 5.5 — $0.10 / $0.50 за 1M токенов",
+  "claude-sonnet-5-5": "Claude Sonnet 5.5 — $2 / $10 за 1M токенов",
+  "claude-opus-5-5": "Claude Opus 5.5 — $4 / $20 за 1M токенов",
+};
 const HOT = new Set(["ready_to_pay", "parent_call", "paid"]);
 
 async function api(path, opts = {}) {
@@ -387,13 +392,15 @@ loaders.leads = async () => {
 
 // ---------- tuning ----------
 loaders.tuning = async () => {
-  const [{ script }, { settings, efforts, model }] = await Promise.all([api("script"), api("settings")]);
+  const [{ script }, { settings, efforts, models }] = await Promise.all([api("script"), api("settings")]);
+  $("#model").innerHTML = models
+    .map((m) => `<option value="${m}" ${m === settings.model ? "selected" : ""}>${MODEL_LABELS[m] ?? m}</option>`)
+    .join("");
   $("#script").value = script;
   $("#script-status").textContent = "";
   $("#effort").innerHTML = efforts.map((e) => `<option ${e === settings.effort ? "selected" : ""}>${e}</option>`).join("");
   $("#paymentLink").value = settings.paymentLink;
   $("#adminPhone").value = formatPhone(settings.adminPhone);
-  $("#model-name").textContent = `Модель: ${model}`;
 };
 $("#script").addEventListener("input", () => ($("#script-status").textContent = "Есть несохранённые изменения"));
 $("#save-script").addEventListener("click", async () => {
@@ -411,7 +418,7 @@ $("#settings-form").addEventListener("submit", async (e) => {
   try {
     await api("settings", {
       method: "PUT",
-      body: { effort: $("#effort").value, paymentLink: $("#paymentLink").value, adminPhone: phoneDigits($("#adminPhone").value) },
+      body: { model: $("#model").value, effort: $("#effort").value, paymentLink: $("#paymentLink").value, adminPhone: phoneDigits($("#adminPhone").value) },
     });
     toast("Настройки сохранены");
   } catch (err) {
@@ -469,8 +476,9 @@ async function refreshWhatsApp() {
   $("#wa-status").innerHTML = `<strong>${labels[s.status] ?? s.status}</strong>${me}${
     s.detail && s.status !== "CONNECTED" ? `<div class="muted small">${esc(s.detail)}</div>` : ""
   }`;
-  if (s.status === "SCAN_QR_CODE") {
-    const { qr } = await api("whatsapp/qr");
+  if (s.status === "SCAN_QR_CODE" || s.status === "STARTING") {
+    // WAHA sometimes still says STARTING while the QR is already available.
+    const { qr } = await api("whatsapp/qr").catch(() => ({}));
     $("#wa-qr").innerHTML = qr ? `<img alt="QR-код WhatsApp" src="${qr}" />` : '<p class="muted">Загрузка QR…</p>';
   } else if (s.status === "CONNECTED") {
     $("#wa-qr").innerHTML = '<p class="muted">✅ Номер привязан. Сканировать ничего не нужно.</p>';

@@ -3,10 +3,13 @@ import { db } from "../db.js";
 import { config } from "../config.js";
 
 export const EFFORTS = ["low", "medium", "high", "xhigh", "max"] as const;
+export const MODELS = ["claude-haiku-5-5", "claude-sonnet-5-5", "claude-opus-5-5"] as const;
+export type Model = (typeof MODELS)[number];
 export type Effort = (typeof EFFORTS)[number];
 
 export interface Settings {
   botEnabled: boolean;
+  model: string;
   effort: Effort;
   paymentLink: string;
   adminPhone: string;
@@ -14,6 +17,7 @@ export interface Settings {
 
 const defaults = (): Settings => ({
   botEnabled: true,
+  model: config.CLAUDE_MODEL,
   effort: config.CLAUDE_EFFORT,
   paymentLink: config.KASPI_PAYMENT_LINK,
   adminPhone: config.ADMIN_PHONE,

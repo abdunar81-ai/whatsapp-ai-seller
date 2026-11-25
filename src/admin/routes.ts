@@ -7,7 +7,7 @@ import { recentLogs } from "../logs.js";
 import { replyToCustomer, type Turn } from "../ai/seller.js";
 import { chatMessages, getChat, listChats, logMessage, resetHistory, setPaused } from "../store/chats.js";
 import { LEAD_STAGES, listLeads, upsertLead, type LeadStage } from "../store/leads.js";
-import { EFFORTS, getSettings, readScript, updateSettings, writeScript, type Effort } from "../store/settings.js";
+import { EFFORTS, MODELS, getSettings, readScript, updateSettings, writeScript, type Effort } from "../store/settings.js";
 import type { WhatsAppClient } from "../whatsapp/types.js";
 import { login, logout, requireAuth, isAuthed } from "./auth.js";
 
@@ -163,15 +163,17 @@ export function mountAdmin(app: Express, wa: WhatsAppClient, notifyHuman: (s: st
       console.log("[admin] sales script updated");
     }),
   );
-  api.get("/settings", h(() => ({ settings: getSettings(), efforts: EFFORTS, model: config.CLAUDE_MODEL })));
+  api.get("/settings", h(() => ({ settings: getSettings(), efforts: EFFORTS, models: MODELS })));
   api.put(
     "/settings",
     h((req) => {
       const b = req.body ?? {};
       if (b.effort !== undefined && !EFFORTS.includes(b.effort)) throw new Error("Неизвестное значение effort");
+      if (b.model !== undefined && !(MODELS as readonly string[]).includes(b.model)) throw new Error("Неизвестная модель");
       const s = updateSettings({
         botEnabled: b.botEnabled === undefined ? undefined : Boolean(b.botEnabled),
         effort: b.effort as Effort | undefined,
+        model: b.model as string | undefined,
         paymentLink: b.paymentLink === undefined ? undefined : String(b.paymentLink).trim(),
         adminPhone: b.adminPhone === undefined ? undefined : String(b.adminPhone).replace(/\D/g, ""),
       });
@@ -212,7 +214,7 @@ export function mountAdmin(app: Express, wa: WhatsAppClient, notifyHuman: (s: st
       const disk = await statfs("data");
       return {
         provider: config.WHATSAPP_PROVIDER,
-        model: config.CLAUDE_MODEL,
+        model: getSettings().model,
         node: process.version,
         uptimeSec: Math.round((Date.now() - startedAt) / 1000),
         hostUptimeSec: Math.round(os.uptime()),
