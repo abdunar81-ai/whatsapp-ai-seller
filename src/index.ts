@@ -11,6 +11,7 @@ import { getSettings } from "./store/settings.js";
 import { createQuestion } from "./store/questions.js";
 import { getLead } from "./store/leads.js";
 import { transcribe, voiceEnabled } from "./ai/transcribe.js";
+import { correctTranscript } from "./ai/correct.js";
 import { mountAdmin } from "./admin/routes.js";
 
 const MAX_HISTORY = 40;
@@ -73,8 +74,14 @@ async function handle(msg: IncomingMessage): Promise<void> {
     }
     await wa.setTyping(msg.chatId, true);
     try {
-      const text = await transcribe(await voice());
-      msg = { ...msg, text: `🎤 ${text || "(неразборчиво)"}`, voice: undefined };
+      const raw = await transcribe(await voice());
+      const history = recentHistory(msg.chatId, 12).map((m) => ({
+        role: m.direction === "in" ? ("user" as const) : ("assistant" as const),
+        text: m.text,
+      }));
+      const fixed = await correctTranscript(msg.chatId, raw, history);
+      if (fixed !== raw) console.log(`[voice] corrected: ${fixed.slice(0, 80)}`);
+      msg = { ...msg, text: `🎤 ${fixed || "(неразборчиво)"}`, rawText: raw, voice: undefined };
     } catch (err) {
       console.error("[voice] could not transcribe", err);
       logMessage(msg.chatId, "in", "🎤 (голосовое сообщение — не удалось распознать)", msg.senderName);
@@ -84,7 +91,7 @@ async function handle(msg: IncomingMessage): Promise<void> {
     }
   }
 
-  logMessage(msg.chatId, "in", msg.text, msg.senderName);
+  logMessage(msg.chatId, "in", msg.text, msg.senderName, msg.rawText);
 
   if (msg.text.trim().toLowerCase() === "/reset") {
     resetHistory(msg.chatId);

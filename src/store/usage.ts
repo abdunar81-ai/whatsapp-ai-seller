@@ -17,7 +17,11 @@ const insert = db.prepare(
 );
 
 /** Record one API call's token usage and estimated cost. */
-export function recordUsage(chatId: string, model: string, u: Anthropic.Beta.BetaUsage): void {
+export function recordUsage(
+  chatId: string,
+  model: string,
+  u: Pick<Anthropic.Beta.BetaUsage, "input_tokens" | "output_tokens" | "cache_read_input_tokens" | "cache_creation_input_tokens">,
+): void {
   const input = u.input_tokens ?? 0;
   const output = u.output_tokens ?? 0;
   const cacheRead = u.cache_read_input_tokens ?? 0;

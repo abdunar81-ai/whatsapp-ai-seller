@@ -66,4 +66,8 @@ CREATE TABLE IF NOT EXISTS settings (
 );
 `);
 
+// Columns added after the first release.
+const messageCols = (db.prepare("PRAGMA table_info(messages)").all() as { name: string }[]).map((c) => c.name);
+if (!messageCols.includes("raw_text")) db.exec("ALTER TABLE messages ADD COLUMN raw_text TEXT");
+
 export const now = () => new Date().toISOString();

@@ -4,6 +4,8 @@ export interface IncomingMessage {
   /** Text of the message; empty for a voice note. */
   text: string;
   senderName?: string;
+  /** Voice notes: the recognizer's text before the AI correction. */
+  rawText?: string;
   /** Present for voice notes: downloads the audio. */
   voice?: () => Promise<{ data: Buffer; mimetype: string }>;
 }

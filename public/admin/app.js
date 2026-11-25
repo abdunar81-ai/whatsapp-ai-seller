@@ -317,7 +317,11 @@ async function openChat(id, keepScroll = false) {
     ${leadBits.length ? `<div class="lead-box">${leadBits.map(esc).join(" · ")}</div>` : ""}
     <div class="bubbles">${messages
       .map(
-        (m) => `<div class="bubble ${m.direction}">${esc(m.text)}<div class="meta">${
+        (m) => `<div class="bubble ${m.direction}">${esc(m.text)}${
+          m.raw_text && m.raw_text !== m.text.replace(/^🎤 /, "")
+            ? `<div class="raw" title="Как услышал Whisper до исправления">распознано: ${esc(m.raw_text)}</div>`
+            : ""
+        }<div class="meta">${
           m.direction === "in" ? "Ученик" : m.direction === "out" ? "Бот" : "Менеджер"
         } · ${time(m.created_at)}</div></div>`,
       )

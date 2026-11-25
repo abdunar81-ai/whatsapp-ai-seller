@@ -16,6 +16,8 @@ export interface MessageRow {
   chat_id: string;
   direction: Direction;
   text: string;
+  /** Voice notes: what the recognizer heard before the AI correction. */
+  raw_text: string | null;
   created_at: string;
 }
 
@@ -26,13 +28,13 @@ const upsertChat = db.prepare(`
     last_message_at = excluded.last_message_at
 `);
 const insertMessage = db.prepare(
-  "INSERT INTO messages (chat_id, direction, text, created_at) VALUES (?, ?, ?, ?)",
+  "INSERT INTO messages (chat_id, direction, text, raw_text, created_at) VALUES (?, ?, ?, ?, ?)",
 );
 
-export function logMessage(chatId: string, direction: Direction, text: string, name?: string): void {
+export function logMessage(chatId: string, direction: Direction, text: string, name?: string, rawText?: string): void {
   const t = now();
   upsertChat.run(chatId, name ?? null, t, t);
-  insertMessage.run(chatId, direction, text, t);
+  insertMessage.run(chatId, direction, text, rawText ?? null, t);
 }
 
 export function getChat(chatId: string): ChatRow | undefined {

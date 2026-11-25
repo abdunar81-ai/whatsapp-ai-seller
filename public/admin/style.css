@@ -125,6 +125,7 @@ main { padding: 20px; max-width: 1280px; margin: 0 auto; }
 .bubble.in { align-self: flex-start; background: var(--bg); border: 1px solid var(--line); }
 .bubble.out { align-self: flex-end; background: var(--accent-soft); }
 .bubble.manual { align-self: flex-end; background: #e0f2fe; color: #0c4a6e; }
+.bubble .raw { font-size: 11px; color: var(--muted); margin-top: 4px; font-style: italic; }
 .bubble .meta { font-size: 10px; color: var(--muted); margin-top: 3px; }
 .test-log { min-height: 220px; max-height: 360px; border: 1px solid var(--line); border-radius: 8px; padding: 10px; margin-bottom: 8px; }
 
