@@ -1,0 +1,68 @@
+name: Build and deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run build
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    env:
+      APP_DIR: whatsapp-ai-seller
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up SSH
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+          SSH_KNOWN_HOSTS: ${{ secrets.SSH_KNOWN_HOSTS }}
+        run: |
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$SSH_PRIVATE_KEY" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          printf '%s\n' "$SSH_KNOWN_HOSTS" > ~/.ssh/known_hosts
+
+      - name: Upload code to the server
+        env:
+          TARGET: ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}
+        # Server-only files (.env, WhatsApp session, leads) are excluded, so they are never overwritten or deleted.
+        run: |
+          ssh "$TARGET" "mkdir -p ~/$APP_DIR"
+          rsync -az --delete \
+            --exclude .git --exclude .github --exclude node_modules --exclude dist \
+            --exclude .env --exclude waha-sessions --exclude auth --exclude data/leads.json \
+            ./ "$TARGET:~/$APP_DIR/"
+
+      - name: Restart containers
+        env:
+          TARGET: ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}
+        run: |
+          ssh "$TARGET" "APP_DIR=$APP_DIR bash -s" <<'REMOTE'
+          set -euo pipefail
+          cd ~/"$APP_DIR"
+          if [ ! -f .env ]; then
+            echo "::error::~/$APP_DIR/.env is missing on the server. Create it from .env.example, then re-run this workflow."
+            exit 1
+          fi
+          docker compose up -d --build --remove-orphans
+          docker image prune -f
+          docker compose ps
+          REMOTE

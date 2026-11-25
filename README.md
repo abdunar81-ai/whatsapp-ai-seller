@@ -37,6 +37,27 @@ Edit `data/script.md` to change the script or prices (it's mounted, so just rest
 
 Both ports are bound to `127.0.0.1`, so nothing is exposed to the internet. Never commit `waha-sessions/` or `auth/`: they are a logged-in WhatsApp session.
 
+## Automatic deploys (GitHub Actions)
+
+Every push to `main` runs `.github/workflows/deploy.yml`: type-check and build, then upload the code to the server over SSH and run `docker compose up -d --build`. The server's `.env`, `waha-sessions/` and `data/leads.json` are never touched.
+
+One-time setup:
+
+1. **Deploy key** (on your Mac):
+   ```bash
+   ssh-keygen -t ed25519 -f ~/.ssh/glucose_deploy -N "" -C "github-actions-deploy"
+   ssh-copy-id -i ~/.ssh/glucose_deploy.pub USER@SERVER_IP
+   ssh-keyscan SERVER_IP
+   ```
+2. **Server**: install Docker (`curl -fsSL https://get.docker.com | sudo sh`), then create `~/whatsapp-ai-seller/.env` from `.env.example`.
+3. **GitHub repo secrets** (Settings → Secrets and variables → Actions):
+   | Secret | Value |
+   |---|---|
+   | `SSH_HOST` | server IP |
+   | `SSH_USER` | SSH user, e.g. `root` |
+   | `SSH_PRIVATE_KEY` | contents of `~/.ssh/glucose_deploy` (the file **without** `.pub`) |
+   | `SSH_KNOWN_HOSTS` | output of `ssh-keyscan SERVER_IP` |
+
 ## Local development
 
 ```bash
