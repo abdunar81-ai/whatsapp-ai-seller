@@ -1,7 +1,7 @@
 services:
   # WhatsApp session lives here. NOWEB engine = no browser, fits a 2 GB server.
   waha:
-    image: devlikeapro/waha
+    image: devlikeapro/waha:noweb-2026.10.1   # pinned; the NOWEB build has no Chrome (~1 GB smaller)
     ports:
       - "127.0.0.1:3001:3000"   # only reachable from the server itself
     environment:
@@ -32,7 +32,7 @@ services:
   # Speech-to-text for voice notes (Kazakh + Russian). "small" fits a 2 GB server;
   # the model unloads after 10 idle minutes to free memory.
   whisper:
-    image: onerahmet/openai-whisper-asr-webservice:latest
+    image: onerahmet/openai-whisper-asr-webservice:v1.11.0   # pinned; v2 changed things, upgrade on purpose
     environment:
       ASR_MODEL: small
       ASR_ENGINE: faster_whisper
@@ -43,7 +43,7 @@ services:
 
   # HTTPS for the admin panel at https://$DOMAIN
   caddy:
-    image: caddy:2-alpine
+    image: caddy:2.11.9-alpine
     ports:
       - "80:80"
       - "443:443"

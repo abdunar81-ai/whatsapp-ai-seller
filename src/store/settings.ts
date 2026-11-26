@@ -1,4 +1,5 @@
-import { readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { db } from "../db.js";
 import { config } from "../config.js";
 
@@ -47,6 +48,39 @@ export function readScript(): string {
   return readFileSync(config.SCRIPT_FILE, "utf8");
 }
 
+// Every save keeps the previous script here, so a bad edit can be undone.
+const SCRIPT_HISTORY_DIR = "data/script-history";
+const KEEP_SCRIPT_VERSIONS = 30;
+
 export function writeScript(text: string): void {
+  if (existsSync(config.SCRIPT_FILE)) {
+    const previous = readFileSync(config.SCRIPT_FILE, "utf8");
+    if (previous === text) return;
+    mkdirSync(SCRIPT_HISTORY_DIR, { recursive: true });
+    const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+    writeFileSync(join(SCRIPT_HISTORY_DIR, `script-${stamp}.md`), previous);
+    for (const old of listScriptVersions().slice(KEEP_SCRIPT_VERSIONS)) {
+      rmSync(join(SCRIPT_HISTORY_DIR, old.name));
+    }
+  }
   writeFileSync(config.SCRIPT_FILE, text);
+}
+
+/** Earlier versions of the script, newest first. */
+export function listScriptVersions(): { name: string; savedAt: string }[] {
+  if (!existsSync(SCRIPT_HISTORY_DIR)) return [];
+  return readdirSync(SCRIPT_HISTORY_DIR)
+    .filter((f) => /^script-[\dT-]+Z\.md$/.test(f))
+    .sort()
+    .reverse()
+    .map((name) => {
+      // script-2026-11-26T10-15-30-123Z.md -> 2026-11-26T10:15:30.123Z
+      const m = name.match(/^script-(\d{4}-\d{2}-\d{2})T(\d{2})-(\d{2})-(\d{2})-(\d{3})Z\.md$/);
+      return { name, savedAt: m ? `${m[1]}T${m[2]}:${m[3]}:${m[4]}.${m[5]}Z` : "" };
+    });
+}
+
+export function readScriptVersion(name: string): string {
+  if (!listScriptVersions().some((v) => v.name === name)) throw new Error("Версия не найдена");
+  return readFileSync(join(SCRIPT_HISTORY_DIR, name), "utf8");
 }

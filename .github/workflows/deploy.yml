@@ -65,6 +65,8 @@ jobs:
             exit 1
           fi
           docker compose up -d --build --remove-orphans
+          # Clean up old images and build leftovers so the disk doesn't fill up over time.
           docker image prune -f
+          docker builder prune -f --filter until=72h
           docker compose ps
           REMOTE

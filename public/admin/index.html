@@ -134,7 +134,13 @@
             </div>
             <p class="muted small">Всё, что бот знает и чему следует: этапы, цены, бонусы. Изменения применяются со следующего сообщения.</p>
             <textarea id="script" spellcheck="false"></textarea>
-            <p id="script-status" class="small muted"></p>
+            <div class="row between">
+              <p id="script-status" class="small muted"></p>
+              <div class="row">
+                <select id="script-versions"><option value="">Прошлые версии…</option></select>
+                <button class="btn ghost" id="script-restore" type="button">Загрузить версию</button>
+              </div>
+            </div>
           </div>
           <div class="stack">
             <div class="card">

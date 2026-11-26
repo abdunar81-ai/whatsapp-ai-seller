@@ -154,15 +154,22 @@ export async function replyToCustomer(ctx: SellerContext, history: Turn[]): Prom
     recordUsage(ctx.dryRun ? "test:admin" : ctx.chatId, message.model, message.usage);
     final = message;
   }
-  if (!final) return "";
 
-  if (final.stop_reason === "refusal") {
-    return "Кешіріңіз, бұл сұраққа менеджер жауап береді. Жақын арада хабарласамыз 🙏";
-  }
-
-  return final.content
+  const text = (final?.content ?? [])
     .filter((b): b is Anthropic.Beta.BetaTextBlock => b.type === "text")
     .map((b) => b.text)
     .join("\n")
     .trim();
+  if (final && final.stop_reason !== "refusal" && text) return text;
+
+  // Declined by a safety filter, or the bot ended without writing anything:
+  // never promise a manager without actually telling one.
+  const reason = final?.stop_reason === "refusal" ? "the AI declined to answer" : "the bot could not write a reply";
+  const lastStudentMessage = [...history].reverse().find((t) => t.role === "user")?.text ?? "";
+  console.warn(`[bot] ${reason} in ${ctx.chatId}; asking a manager`);
+  if (!ctx.dryRun) await ctx.askManager(`(${reason}) ${lastStudentMessage}`);
+  return HANDOFF_REPLY;
 }
+
+/** Sent when the bot hands a message to the managers instead of answering it. */
+export const HANDOFF_REPLY = "Кешіріңіз, бұл сұраққа менеджер жауап береді. Жақын арада хабарласамыз 🙏";

@@ -87,7 +87,8 @@ function maskPhoneInput(input) {
 document.querySelectorAll("input[data-phone]").forEach(maskPhoneInput);
 
 const phone = (chatId) => {
-  const d = String(chatId).split("@")[0];
+  const [d, domain] = String(chatId).split("@");
+  if (domain === "lid") return `WhatsApp ID ${d}`; // privacy id: WhatsApp hides this contact's number
   return /^7\d{10}$/.test(d) ? formatPhone(d) : "+" + d;
 };
 const time = (iso) => (iso ? new Date(iso).toLocaleString("ru-RU", { dateStyle: "short", timeStyle: "short" }) : "");
@@ -293,7 +294,11 @@ async function openChat(id, keepScroll = false) {
   const [{ chat, messages }, leads] = await Promise.all([api(`chats/${encodeURIComponent(id)}/messages`), api("leads")]);
   const lead = leads.find((l) => l.chatId === id);
   const view = $("#chat-view");
-  const prevScroll = keepScroll && view.dataset.chat === id ? view.querySelector(".bubbles")?.scrollTop : null;
+  const sameChat = view.dataset.chat === id;
+  const prevScroll = keepScroll && sameChat ? view.querySelector(".bubbles")?.scrollTop : null;
+  // Keep what the manager is typing when the chat refreshes itself.
+  const input = view.querySelector("#chat-text");
+  const draft = sameChat && input ? { value: input.value, focused: document.activeElement === input, at: input.selectionStart } : null;
   view.dataset.chat = id;
   const leadBits = lead
     ? [
@@ -332,6 +337,14 @@ async function openChat(id, keepScroll = false) {
     </form>`;
   const bubbles = view.querySelector(".bubbles");
   bubbles.scrollTop = keepScroll && prevScroll != null ? prevScroll : bubbles.scrollHeight;
+  if (draft) {
+    const box = $("#chat-text");
+    box.value = draft.value;
+    if (draft.focused) {
+      box.focus();
+      box.setSelectionRange(draft.at ?? box.value.length, draft.at ?? box.value.length);
+    }
+  }
 
   $("#chat-pause").onclick = async () => {
     await api(`chats/${encodeURIComponent(id)}/pause`, { method: "POST", body: { paused: !chat?.paused } });
@@ -543,7 +556,27 @@ $("#kb-list").addEventListener("click", async (e) => {
 });
 
 // ---------- tuning ----------
+async function loadScriptVersions() {
+  const { versions } = await api("script/versions");
+  $("#script-versions").innerHTML =
+    `<option value="">Прошлые версии (${versions.length})…</option>` +
+    versions.map((v) => `<option value="${esc(v.name)}">до сохранения ${time(v.savedAt)}</option>`).join("");
+}
+$("#script-restore").addEventListener("click", async () => {
+  const name = $("#script-versions").value;
+  if (!name) return toast("Выберите версию в списке");
+  if ($("#script-status").textContent.startsWith("Есть несохранённые") && !confirm("Несохранённые изменения пропадут. Загрузить версию?")) return;
+  try {
+    const { script } = await api(`script/versions/${encodeURIComponent(name)}`);
+    $("#script").value = script;
+    $("#script-status").textContent = "Загружена прошлая версия — нажмите «Сохранить скрипт», чтобы вернуть её боту";
+  } catch (err) {
+    toast(err.message);
+  }
+});
+
 loaders.tuning = async () => {
+  loadScriptVersions().catch(() => {});
   const [{ script }, { settings, efforts, models }] = await Promise.all([api("script"), api("settings")]);
   $("#model").innerHTML = models
     .map((m) => `<option value="${m}" ${m === settings.model ? "selected" : ""}>${MODEL_LABELS[m] ?? m}</option>`)
@@ -560,6 +593,7 @@ $("#save-script").addEventListener("click", async () => {
     await api("script", { method: "PUT", body: { script: $("#script").value } });
     $("#script-status").textContent = `Сохранено в ${new Date().toLocaleTimeString("ru-RU")}`;
     toast("Скрипт сохранён: бот использует его со следующего сообщения");
+    loadScriptVersions().catch(() => {});
   } catch (err) {
     toast(err.message);
   }

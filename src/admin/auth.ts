@@ -35,6 +35,7 @@ export function isAuthed(req: Request): boolean {
 const failures = new Map<string, { count: number; until: number }>();
 
 export function login(req: Request, res: Response): void {
+  for (const [key, v] of failures) if (v.until <= Date.now()) failures.delete(key);
   const ip = req.ip ?? "?";
   const f = failures.get(ip);
   if (f && f.until > Date.now() && f.count >= 5) {

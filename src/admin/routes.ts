@@ -7,7 +7,17 @@ import { recentLogs } from "../logs.js";
 import { replyToCustomer, type Turn } from "../ai/seller.js";
 import { chatMessages, getChat, listChats, logMessage, resetHistory, setPaused } from "../store/chats.js";
 import { LEAD_STAGES, listLeads, upsertLead, type LeadStage } from "../store/leads.js";
-import { EFFORTS, MODELS, getSettings, readScript, updateSettings, writeScript, type Effort } from "../store/settings.js";
+import {
+  EFFORTS,
+  MODELS,
+  getSettings,
+  listScriptVersions,
+  readScript,
+  readScriptVersion,
+  updateSettings,
+  writeScript,
+  type Effort,
+} from "../store/settings.js";
 import type { WhatsAppClient } from "../whatsapp/types.js";
 import {
   addKnowledge,
@@ -91,8 +101,10 @@ function stats() {
 }
 
 function csvEscape(v: unknown): string {
-  const s = v == null ? "" : String(v);
-  return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+  let s = v == null ? "" : String(v);
+  // Text from students must never run as an Excel formula.
+  if (/^[=+\-@\t\r]/.test(s)) s = "'" + s;
+  return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
 }
 
 export function mountAdmin(app: Express, wa: WhatsAppClient, notifyHuman: (s: string) => Promise<void>): void {
@@ -214,6 +226,8 @@ export function mountAdmin(app: Express, wa: WhatsAppClient, notifyHuman: (s: st
       console.log("[admin] sales script updated");
     }),
   );
+  api.get("/script/versions", h(() => ({ versions: listScriptVersions() })));
+  api.get("/script/versions/:name", h((req) => ({ script: readScriptVersion(String(req.params.name)) })));
   api.get("/settings", h(() => ({ settings: getSettings(), efforts: EFFORTS, models: MODELS })));
   api.put(
     "/settings",
