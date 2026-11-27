@@ -3,7 +3,9 @@ import { db, now } from "../db.js";
 export const LEAD_STAGES = [
   "new",
   "qualifying",
+  "test_sent",
   "presented",
+  "handed_over",
   "price_sent",
   "ready_to_pay",
   "parent_call",
@@ -19,6 +21,7 @@ export interface LeadData {
   subjects?: string;
   specialty?: string;
   startedPrep?: string;
+  testResult?: string;
   targetScore?: string;
   priorities?: string;
   parentPhone?: string;

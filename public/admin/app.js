@@ -6,7 +6,9 @@ const esc = (s) =>
 const STAGE_LABELS = {
   new: "Новая",
   qualifying: "Выявление потребностей",
+  test_sent: "Отправлен тест",
   presented: "Презентация",
+  handed_over: "Передан менеджеру",
   price_sent: "Озвучена цена",
   ready_to_pay: "Готов оплатить",
   parent_call: "Звонок родителям",
@@ -18,7 +20,7 @@ const MODEL_LABELS = {
   "claude-sonnet-5-5": "Claude Sonnet 5.5 — $2 / $10 за 1M токенов",
   "claude-opus-5-5": "Claude Opus 5.5 — $4 / $20 за 1M токенов",
 };
-const HOT = new Set(["ready_to_pay", "parent_call", "paid"]);
+const HOT = new Set(["handed_over", "ready_to_pay", "parent_call", "paid"]);
 
 async function api(path, opts = {}) {
   const res = await fetch(`/admin/api/${path}`, {
@@ -221,7 +223,7 @@ loaders.overview = async () => {
     ["Сообщений сегодня", num(t.messagesToday), `новых чатов сегодня: ${num(t.newChatsToday)}`],
     ["Диалоги", num(t.chats), `ведёт менеджер: ${num(t.paused)}`],
     ["Заявки", num(t.leads), "с сохранёнными данными"],
-    ["Готовы оплатить / оплатили", num(t.readyToPay), `${conv}% от заявок`],
+    ["Переданы менеджеру / готовы оплатить", num(t.readyToPay), `${conv}% от заявок`],
     ["Расход Claude сегодня", money(s.cost.today.usd), `${money(s.cost.month.usd)} за 30 дней`],
   ]
     .map(([l, v, sub]) => `<div class="card kpi"><div class="label">${l}</div><div class="value">${v}</div><div class="sub">${sub}</div></div>`)
@@ -230,7 +232,7 @@ loaders.overview = async () => {
   const max = Math.max(1, ...s.daily.map((d) => Math.max(d.incoming, d.new_chats)));
   $("#chart").innerHTML = s.daily
     .map(
-      (d) => `<div class="col" title="${d.day}: сообщений ${d.incoming}, новых чатов ${d.new_chats}, готовы оплатить ${d.ready}, ${money(d.cost)}">
+      (d) => `<div class="col" title="${d.day}: сообщений ${d.incoming}, новых чатов ${d.new_chats}, переданы менеджеру ${d.ready}, ${money(d.cost)}">
         <div class="bars"><div class="bar a" style="height:${(d.incoming / max) * 100}%"></div><div class="bar b" style="height:${(d.new_chats / max) * 100}%"></div></div>
         <div class="day">${d.day.slice(8)}</div></div>`,
     )
@@ -306,6 +308,7 @@ async function openChat(id, keepScroll = false) {
         lead.grade && `${lead.grade} сынып`,
         lead.subjects && `📚 ${lead.subjects}`,
         lead.specialty && `🎓 ${lead.specialty}`,
+        lead.testResult && `📝 тест: ${lead.testResult}`,
         lead.targetScore && `🎯 ${lead.targetScore}`,
         lead.parentPhone && `📞 ${lead.parentPhone}`,
         lead.paymentPreference && `💳 ${lead.paymentPreference}`,

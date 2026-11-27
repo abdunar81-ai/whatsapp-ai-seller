@@ -1,7 +1,8 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { betaZodTool } from "@anthropic-ai/sdk/helpers/beta/zod";
 import { z } from "zod/v4";
-import { LEAD_STAGES, upsertLead } from "../store/leads.js";
+import { LEAD_STAGES, getLead, upsertLead } from "../store/leads.js";
+import { setPaused } from "../store/chats.js";
 import { getSettings, readScript } from "../store/settings.js";
 import { knowledgeText } from "../store/questions.js";
 import { recordUsage } from "../store/usage.js";
@@ -10,25 +11,25 @@ const client = new Anthropic(); // reads ANTHROPIC_API_KEY
 
 // Kept byte-stable for a given script + payment link, so prompt caching keeps hitting.
 function buildSystemPrompt(script: string, knowledge: string, paymentLink: string): string {
-  const paymentStep = paymentLink
-    ? `When the customer is ready to pay, send this payment link: ${paymentLink}`
-    : "There is no payment link yet: when the customer is ready to pay, set stage ready_to_pay with save_lead and tell them the manager will send the payment link shortly.";
+  // The script decides the sales flow; these rules only say how to work with it.
+  const payment = paymentLink
+    ? `\n- Payment link: ${paymentLink}. Send it only if the script has a payment step and the customer is ready to pay.`
+    : "";
 
-  return `You are the WhatsApp sales manager of an education center. Your sales script and all course facts are below, between <script> tags. Follow it.
+  return `You are the WhatsApp sales manager of an education center. Your sales script and all course facts are below, between <script> tags. The script decides what you offer and in what order: follow it, not your own sales ideas.
 
 How you work:
 - Write like a real manager on WhatsApp: short, warm messages, a few lines each, emojis as in the script. WhatsApp formatting only (*bold*); no markdown headings, lists with "-", or tables.
 - Language: Kazakh by default, as in the script. If the customer writes in Russian, answer in Russian.
-- Go through the script steps in order, one step per message, and ask one question at a time. Wait for the answer before moving on. Adapt the wording to what the customer said (their subjects, specialty, goals); don't paste whole blocks they've already seen.
-- If the customer asks something out of order (e.g. the price right away), answer it briefly and steer back to the next step.
-- Only use facts, prices, bonuses and payment terms from the script and the knowledge base. Never invent discounts, deadlines, guarantees or features.
-- If the customer asks something the script and knowledge base don't answer, don't guess: call ask_manager with their question (keep their words), tell them you'll check with the manager and get back to them, then continue the script where it makes sense.
+- Go through the script steps in order, one step per message, and wait for the customer's answer before moving on. Use the script's wording, adapted to what the customer said (their name, subjects, goals); don't repeat blocks they've already seen.
+- If the customer asks something out of order, answer it briefly from the script or knowledge base and steer back to the current step.
+- Only use facts, prices, offers, links and terms that are in the script or the knowledge base. Never invent discounts, deadlines, guarantees or features. If the script says the manager explains something (for example prices), don't state it yourself, even if earlier messages in this chat mentioned it: the script may have changed since.
+- If the customer asks something the script and knowledge base don't answer, don't guess: call ask_manager with their question (keep their words), tell them you'll check with the manager, then continue the script.
+- When the script says to connect the customer with the manager and they agree (for example they send "+"), or they ask for a real person, complain or ask for a refund: call request_human with a short summary of who they are and what they want, and tell them the manager will write to them soon. The manager then takes over this chat.
 - Messages starting with 🎤 are voice notes, transcribed and then corrected automatically; a few words may still be wrong, so read them for meaning, and if one is unclear, ask the customer to repeat or write it.
 - If someone sincerely asks whether they're talking to a bot, say honestly that you are GLUCOSE's AI assistant and a manager can join the chat.
-- Call save_lead whenever you learn something new about the customer (name, grade, subjects, specialty, target score, what matters to them, parent's phone, payment preference) and when the conversation moves to a new stage. Don't mention that you're saving anything.
-- ${paymentStep}
-- If the customer gives a parent's phone number for a call, save it (stage parent_call) and say the manager will call.
-- Complaints, refunds, or a customer who wants a real person: call request_human and tell the customer a manager will reply soon.
+- Call save_lead whenever you learn something new about the customer (name, grade, subjects, test result, target score, how they prepare now, preferred format, parent's phone) and when the conversation reaches a new stage. Don't mention that you're saving anything.${payment}
+- Every turn must end with a message to the customer, even after calling tools.
 
 <script>
 ${script}
@@ -70,8 +71,9 @@ function buildTools(ctx: SellerContext) {
         subjects: z.string().optional().describe("Elective ҰБТ subjects, e.g. 'Био/Хим'"),
         specialty: z.string().optional().describe("Chosen specialty / university direction"),
         startedPrep: z.string().optional().describe("Whether and how they already prepare for ҰБТ"),
+        testResult: z.string().optional().describe("Trial test result they sent"),
         targetScore: z.string().optional(),
-        priorities: z.string().optional().describe("What matters to them in a course"),
+        priorities: z.string().optional().describe("Preferred study format / what matters to them in a course"),
         parentPhone: z.string().optional(),
         paymentPreference: z.string().optional().describe("Full payment or installments (and months)"),
         notes: z.string().optional(),
@@ -106,13 +108,31 @@ function buildTools(ctx: SellerContext) {
     }),
     betaZodTool({
       name: "request_human",
-      description: "Hand the conversation to a human manager (complaints, refunds, questions the script doesn't cover).",
-      inputSchema: z.object({ reason: z.string() }),
+      description:
+        "Hand the customer to a human manager: when the script says to connect them with the manager and they agree (e.g. they send \"+\"), when they ask for a real person, or for complaints and refunds. The bot stops replying in this chat afterwards.",
+      inputSchema: z.object({
+        reason: z.string().describe("Short summary: who the customer is and what they want from the manager"),
+      }),
       run: async ({ reason }) => {
-        if (!ctx.dryRun) {
-          await ctx.notifyHuman(`Customer ${ctx.senderName ?? ""} (${ctx.chatId}) needs a manager: ${reason}`);
-        }
-        return "A manager has been notified.";
+        if (ctx.dryRun) return "Test mode: no manager was notified. In real chats the manager gets an alert and takes over.";
+        const before = getLead(ctx.chatId);
+        const lead = upsertLead(ctx.chatId, {
+          whatsappName: ctx.senderName,
+          ...(before?.stage === "paid" ? {} : { stage: "handed_over" as const }),
+        }).after;
+        const who = [
+          lead.name ?? ctx.senderName,
+          lead.grade && `${lead.grade} сынып`,
+          lead.subjects,
+          lead.testResult && `тест: ${lead.testResult}`,
+          lead.targetScore && `мақсат: ${lead.targetScore}`,
+        ]
+          .filter(Boolean)
+          .join(", ");
+        await ctx.notifyHuman(`Нужен менеджер: ${who || "клиент"} (${ctx.chatId}). ${reason}`);
+        // The manager answers from here on; the bot would only talk over them.
+        setPaused(ctx.chatId, true);
+        return "The manager has been notified and will write to the customer. Tell the customer that; the bot is now paused in this chat.";
       },
     }),
   ];

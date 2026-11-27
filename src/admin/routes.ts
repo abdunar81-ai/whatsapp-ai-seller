@@ -60,7 +60,7 @@ function stats() {
     leads: one<{ n: number }>("SELECT COUNT(*) n FROM leads").n,
     messagesToday: one<{ n: number }>(`SELECT COUNT(*) n FROM messages WHERE direction='in' AND ${since(1)}`).n,
     newChatsToday: one<{ n: number }>(`SELECT COUNT(*) n FROM chats WHERE ${since(1)}`).n,
-    readyToPay: one<{ n: number }>(`SELECT COUNT(*) n FROM leads WHERE stage IN ('ready_to_pay','paid')`).n,
+    readyToPay: one<{ n: number }>(`SELECT COUNT(*) n FROM leads WHERE stage IN ('handed_over','ready_to_pay','paid')`).n,
     paused: one<{ n: number }>("SELECT COUNT(*) n FROM chats WHERE paused = 1").n,
     openQuestions: openQuestionCount(),
   };
@@ -85,7 +85,7 @@ function stats() {
        SELECT d AS day,
          (SELECT COUNT(*) FROM messages WHERE direction='in' AND date(created_at, ?) = d) AS incoming,
          (SELECT COUNT(*) FROM chats WHERE date(created_at, ?) = d) AS new_chats,
-         (SELECT COUNT(*) FROM leads WHERE stage IN ('ready_to_pay','paid') AND date(updated_at, ?) = d) AS ready,
+         (SELECT COUNT(*) FROM leads WHERE stage IN ('handed_over','ready_to_pay','paid') AND date(updated_at, ?) = d) AS ready,
          (SELECT COALESCE(SUM(cost_usd), 0) FROM usage WHERE date(created_at, ?) = d) AS cost
        FROM days`,
     )
@@ -168,7 +168,7 @@ export function mountAdmin(app: Express, wa: WhatsAppClient, notifyHuman: (s: st
   );
   api.get("/leads.csv", (_req, res) => {
     const cols = [
-      "chatId", "name", "whatsappName", "grade", "subjects", "specialty", "startedPrep", "targetScore",
+      "chatId", "name", "whatsappName", "grade", "subjects", "specialty", "startedPrep", "testResult", "targetScore",
       "priorities", "parentPhone", "paymentPreference", "stage", "notes", "createdAt", "updatedAt",
     ] as const;
     const rows = listLeads().map((l) => cols.map((c) => csvEscape((l as unknown as Record<string, unknown>)[c])).join(","));
