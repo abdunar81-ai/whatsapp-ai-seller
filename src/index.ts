@@ -8,7 +8,7 @@ import { WahaClient } from "./whatsapp/waha.js";
 import type { IncomingMessage, WhatsAppClient } from "./whatsapp/types.js";
 import { getChat, logMessage, recentHistory } from "./store/chats.js";
 import { getSettings } from "./store/settings.js";
-import { createQuestion } from "./store/questions.js";
+import { createQuestion, openQuestionsFor } from "./store/questions.js";
 import { getLead } from "./store/leads.js";
 import { transcribe, voiceEnabled } from "./ai/transcribe.js";
 import { correctTranscript } from "./ai/correct.js";
@@ -50,8 +50,32 @@ const prettyPhone = (chatId: string) => {
   return /^7\d{10}$/.test(d) ? `+7 (${d.slice(1, 4)}) ${d.slice(4, 7)}-${d.slice(7, 9)}-${d.slice(9)}` : `+${d}`;
 };
 
+/** Words of a question, for spotting the same question asked twice. */
+const words = (s: string) =>
+  new Set(
+    s
+      .toLowerCase()
+      .replace(/\([^)]*\)/g, " ")
+      .split(/[^\p{L}\p{N}]+/u)
+      .filter((w) => w.length > 2),
+  );
+
+function sameQuestion(a: string, b: string): boolean {
+  const wa = words(a), wb = words(b);
+  if (!wa.size || !wb.size) return a.trim() === b.trim();
+  let common = 0;
+  for (const w of wa) if (wb.has(w)) common++;
+  return common / Math.min(wa.size, wb.size) >= 0.7;
+}
+
 function askManagerFor(chatId: string, senderName?: string) {
-  return async (question: string): Promise<number> => {
+  return async (question: string): Promise<{ id: number; duplicate: boolean }> => {
+    // The student repeating a question must not ping the managers again.
+    const existing = openQuestionsFor(chatId).find((q) => sameQuestion(q.question, question));
+    if (existing) {
+      console.log(`[question #${existing.id}] asked again in ${chatId}; not re-sent`);
+      return { id: existing.id, duplicate: true };
+    }
     const name = getLead(chatId)?.name ?? senderName;
     const q = createQuestion(chatId, name, question);
     console.log(`[question #${q.id}] ${name ?? ""} ${chatId}: ${question}`);
@@ -59,7 +83,7 @@ function askManagerFor(chatId: string, senderName?: string) {
     await sendAlert(
       `❓ Вопрос #${q.id}\nОт: ${name ?? "без имени"} ${prettyPhone(chatId)}\n«${question}»${link}`,
     );
-    return q.id;
+    return { id: q.id, duplicate: false };
   };
 }
 

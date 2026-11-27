@@ -20,11 +20,17 @@ function buildSystemPrompt(script: string, knowledge: string, paymentLink: strin
 
 How you work:
 - Write like a real manager on WhatsApp: short, warm messages, a few lines each, emojis as in the script. WhatsApp formatting only (*bold*); no markdown headings, lists with "-", or tables.
-- Language: Kazakh by default, as in the script. If the customer writes in Russian, answer in Russian.
+- Language: answer in the language of the customer's latest message: Kazakh (the default, as in the script) or Russian. Don't mix the two in one message.
 - Go through the script steps in order, one step per message, and wait for the customer's answer before moving on. Use the script's wording, adapted to what the customer said (their name, subjects, goals); don't repeat blocks they've already seen.
 - If the customer asks something out of order, answer it briefly from the script or knowledge base and steer back to the current step.
 - Only use facts, prices, offers, links and terms that are in the script or the knowledge base. Never invent discounts, deadlines, guarantees or features. If the script says the manager explains something (for example prices), don't state it yourself, even if earlier messages in this chat mentioned it: the script may have changed since.
-- If the customer asks something the script and knowledge base don't answer, don't guess: call ask_manager with their question (keep their words), tell them you'll check with the manager, then continue the script.
+- ask_manager is a last resort. Before calling it, re-read the script and the knowledge base: if they answer the question, even partly or in other words, answer from them. Don't use ask_manager for:
+  - prices, discounts, packages or payment when the script says the manager explains them: follow the script instead (e.g. offer to leave "+");
+  - things the script covers at a later step: answer briefly from that step, or say you'll get to it, and continue;
+  - general questions that are not about GLUCOSE (which university to choose, how ҰБТ scoring works) and small talk: answer briefly without promises, or say it can be discussed in the free consultation, and continue the script;
+  - anything already asked to the manager in this chat: say the manager will answer it here.
+  Use ask_manager for a concrete question about GLUCOSE (its courses, subjects, schedule, teachers, rules, refunds, gifts) that the script and knowledge base really don't answer. Pass the customer's question in their words, tell them you'll check with the manager, then continue the script.
+  Never tell the customer that the manager will tell them something unless you call ask_manager in this turn, or it is something the script says the manager explains after the "+" handoff (then point them to "+").
 - When the script says to connect the customer with the manager and they agree (for example they send "+"), or they ask for a real person, complain or ask for a refund: call request_human with a short summary of who they are and what they want, and tell them the manager will write to them soon. The manager then takes over this chat.
 - Messages starting with 🎤 are voice notes, transcribed and then corrected automatically; a few words may still be wrong, so read them for meaning, and if one is unclear, ask the customer to repeat or write it.
 - If someone sincerely asks whether they're talking to a bot, say honestly that you are GLUCOSE's AI assistant and a manager can join the chat.
@@ -47,7 +53,7 @@ export interface SellerContext {
   senderName?: string;
   notifyHuman: (summary: string) => Promise<void>;
   /** Send a question the script can't answer to the managers; returns its number. */
-  askManager: (question: string) => Promise<number>;
+  askManager: (question: string) => Promise<{ id: number; duplicate: boolean }>;
   /** Test chat from the admin panel: nothing is saved and nobody is notified. */
   dryRun?: boolean;
 }
@@ -96,14 +102,16 @@ function buildTools(ctx: SellerContext) {
     betaZodTool({
       name: "ask_manager",
       description:
-        "Ask the managers a question the script and knowledge base don't answer. They reply to the customer themselves.",
+        "Last resort: ask the managers a concrete question about GLUCOSE that the script and knowledge base don't answer (re-read both first). They reply to the customer themselves. Not for prices or payment when the script says the manager explains them, not for general questions, not for questions already asked in this chat.",
       inputSchema: z.object({
         question: z.string().describe("The customer's question, in their words"),
       }),
       run: async ({ question }) => {
-        if (ctx.dryRun) return "Test mode: the question was not sent. In real chats the managers get it.";
-        const id = await ctx.askManager(question);
-        return `Question #${id} sent to the managers. They will answer the customer in this chat.`;
+        if (ctx.dryRun) return "Test mode: the question was not sent. In real chats the managers get it. Reply in the language of the customer's latest message.";
+        const { id, duplicate } = await ctx.askManager(question);
+        return duplicate
+          ? `This was already asked as question #${id}, still waiting for the managers. Don't ask again: tell the customer the manager will answer it in this chat, and continue the script.`
+          : `Question #${id} sent to the managers. They will answer the customer in this chat. Now reply to the customer in the language of their latest message (Kazakh unless they wrote in Russian).`;
       },
     }),
     betaZodTool({
@@ -150,6 +158,16 @@ export async function replyToCustomer(ctx: SellerContext, history: Turn[]): Prom
   }));
   while (messages.length > 0 && messages[0]!.role !== "user") messages.shift();
   if (messages.length === 0) return "";
+
+  // Haiku sometimes answers Kazakh in Russian (e.g. "Видеосабақтар нешеде..."). Letters that
+  // exist only in Kazakh settle it; without them, the model decides from the text.
+  const last = messages.at(-1)!;
+  if (last.role === "user" && typeof last.content === "string" && /[әғқңөұүһі]/i.test(last.content)) {
+    last.content = [
+      { type: "text", text: last.content },
+      { type: "text", text: "(The customer wrote in Kazakh: reply in Kazakh.)" },
+    ];
+  }
 
   // Haiku has no server-side fallback (a fallbacks list is rejected), so only send it for Sonnet/Opus.
   const fallback = settings.model.startsWith("claude-haiku")

@@ -253,7 +253,7 @@ export function mountAdmin(app: Express, wa: WhatsAppClient, notifyHuman: (s: st
       const clean = history
         .filter((t) => (t.role === "user" || t.role === "assistant") && typeof t.text === "string")
         .slice(-40);
-      const reply = await replyToCustomer({ chatId: "test:admin", dryRun: true, notifyHuman, askManager: async () => 0 }, clean);
+      const reply = await replyToCustomer({ chatId: "test:admin", dryRun: true, notifyHuman, askManager: async () => ({ id: 0, duplicate: false }) }, clean);
       return { reply };
     }),
   );

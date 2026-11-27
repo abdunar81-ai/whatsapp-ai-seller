@@ -26,6 +26,12 @@ export function createQuestion(chatId: string, customerName: string | undefined,
   return getQuestion(Number(r.lastInsertRowid))!;
 }
 
+export function openQuestionsFor(chatId: string): QuestionRow[] {
+  return db
+    .prepare("SELECT * FROM questions WHERE chat_id = ? AND status = 'open' ORDER BY id")
+    .all(chatId) as unknown as QuestionRow[];
+}
+
 export function getQuestion(id: number): QuestionRow | undefined {
   return db.prepare("SELECT * FROM questions WHERE id = ?").get(id) as QuestionRow | undefined;
 }
