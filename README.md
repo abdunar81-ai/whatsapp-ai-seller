@@ -25,6 +25,9 @@ WhatsApp customer ──► WhatsApp connector (Baileys or WAHA) ──► Expre
 
 - **Overview** – messages, conversations, leads, funnel by stage, Claude cost (today / 7 / 30 days), 14-day chart.
 - **Chats** – every conversation; take over a chat (pauses the bot there), write as the manager, reset the bot's memory.
+  - When the bot hands a chat to a manager (the customer sent "+"), it goes quiet there. If no manager writes within 30 minutes, it answers the customer again and alerts the manager. A message a manager sends from the phone also pauses the bot in that chat.
+  - A customer writing in a paused chat triggers an alert to the manager (at most every 15 minutes).
+  - Every 5 minutes the bot answers customers whose last message (in the past 24 hours) got no reply, e.g. after a restart or a WhatsApp outage. A reply that fails is retried twice before the manager is alerted.
 - **Leads** – everything the bot collected, change stages, export CSV for Excel.
 - **Questions** – questions the script doesn't cover. The bot asks the managers (WhatsApp alert to the manager number, or the store number's own "You" chat) instead of guessing; answer in the panel and tick "add to knowledge base" so the bot answers it itself next time. The knowledge base is editable here too.
 - **Bot tuning** – edit the sales script, reply depth (effort), Kaspi link, alert number; a **test chat** to try the bot without touching real customers.

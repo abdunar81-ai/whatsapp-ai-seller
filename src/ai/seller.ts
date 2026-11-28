@@ -2,12 +2,17 @@ import Anthropic from "@anthropic-ai/sdk";
 import { betaZodTool } from "@anthropic-ai/sdk/helpers/beta/zod";
 import { z } from "zod/v4";
 import { LEAD_STAGES, getLead, upsertLead } from "../store/leads.js";
-import { setPaused } from "../store/chats.js";
+import { getChat, managerWroteSince, markHandoff, setPaused } from "../store/chats.js";
 import { getSettings, readScript } from "../store/settings.js";
 import { knowledgeText } from "../store/questions.js";
 import { recordUsage } from "../store/usage.js";
 
-const client = new Anthropic(); // reads ANTHROPIC_API_KEY
+// Reads ANTHROPIC_API_KEY. A hung request must not leave a customer waiting for long: give up
+// after 2 minutes (and retry), instead of the SDK's default of 10.
+const client = new Anthropic({ timeout: 120_000, maxRetries: 2 });
+
+/** A second handoff this soon after the first, with no manager reply yet, reminds the manager instead of pausing again. */
+const REPEAT_HANDOFF_MS = 24 * 60 * 60 * 1000;
 
 // Kept byte-stable for a given script + payment link, so prompt caching keeps hitting.
 function buildSystemPrompt(script: string, knowledge: string, paymentLink: string): string {
@@ -31,7 +36,12 @@ How you work:
   - anything already asked to the manager in this chat: say the manager will answer it here.
   Use ask_manager for a concrete question about GLUCOSE (its courses, subjects, schedule, teachers, rules, refunds, gifts) that the script and knowledge base really don't answer. Pass the customer's question in their words, tell them you'll check with the manager, then continue the script.
   Never tell the customer that the manager will tell them something unless you call ask_manager in this turn, or it is something the script says the manager explains after the "+" handoff (then point them to "+").
-- When the script says to connect the customer with the manager and they agree (for example they send "+"), or they ask for a real person, complain or ask for a refund: call request_human with a short summary of who they are and what they want, and tell them the manager will write to them soon. The manager then takes over this chat.
+- request_human hands the chat to a manager and stops you replying, so use it only when:
+  - the customer sends "+" or clearly agrees after the script offers to connect them with the manager;
+  - they ask in their own words for a real person, a manager or a call;
+  - they complain or ask for a refund.
+  Never call it for prices, payment, questions you can't answer (follow the script or use ask_manager), or just because the script or a message mentions the manager. If unsure, ask the customer whether they want the manager to contact them. When you call it, pass a short summary of who they are and what they want, and tell them the manager will write to them soon.
+- Messages starting with 📷 are photos or PDFs the customer sent, described automatically: use the description (for a test result, its scores) as if you saw the file. "(фото)", "(стикер)", "(видео)", "(файл)" or "(вложение)" is media you can't see: if it may be their test result, ask them to write the scores; for a sticker, reply briefly and continue the script.
 - Messages starting with 🎤 are voice notes, transcribed and then corrected automatically; a few words may still be wrong, so read them for meaning, and if one is unclear, ask the customer to repeat or write it.
 - If someone sincerely asks whether they're talking to a bot, say honestly that you are GLUCOSE's AI assistant and a manager can join the chat.
 - Call save_lead whenever you learn something new about the customer (name, grade, subjects, test result, target score, how they prepare now, preferred format, parent's phone) and when the conversation reaches a new stage. Don't mention that you're saving anything.${payment}
@@ -137,9 +147,20 @@ function buildTools(ctx: SellerContext) {
         ]
           .filter(Boolean)
           .join(", ");
+
+        // Already handed over and the manager hasn't written: remind them, but keep the bot on so the
+        // customer isn't left in silence again.
+        const handoffAt = getChat(ctx.chatId)?.handoff_at;
+        if (handoffAt && Date.now() - Date.parse(handoffAt) < REPEAT_HANDOFF_MS && !managerWroteSince(ctx.chatId, handoffAt)) {
+          await ctx.notifyHuman(`Клиент снова ждёт менеджера: ${who || "клиент"} (${ctx.chatId}). ${reason}`);
+          return "The manager was already called earlier and hasn't written yet; they have been reminded now. Tell the customer the manager will write soon, and meanwhile keep helping them with the script. You keep replying in this chat.";
+        }
+
         await ctx.notifyHuman(`Нужен менеджер: ${who || "клиент"} (${ctx.chatId}). ${reason}`);
-        // The manager answers from here on; the bot would only talk over them.
-        setPaused(ctx.chatId, true);
+        // The manager answers from here on; the bot would only talk over them. If the manager doesn't
+        // write for a while, the bot picks the chat up again (see index.ts).
+        markHandoff(ctx.chatId);
+        setPaused(ctx.chatId, true, "handoff");
         return "The manager has been notified and will write to the customer. Tell the customer that; the bot is now paused in this chat.";
       },
     }),
@@ -187,17 +208,30 @@ export async function replyToCustomer(ctx: SellerContext, history: Turn[]): Prom
     messages,
   });
 
+  const textOf = (m: Anthropic.Beta.BetaMessage | undefined) =>
+    (m?.content ?? [])
+      .filter((b): b is Anthropic.Beta.BetaTextBlock => b.type === "text")
+      .map((b) => b.text)
+      .join("\n")
+      .trim();
+
   let final: Anthropic.Beta.BetaMessage | undefined;
+  let nudged = false;
   for await (const message of runner) {
     recordUsage(ctx.dryRun ? "test:admin" : ctx.chatId, message.model, message.usage);
     final = message;
+    // The model sometimes ends after its tool calls without writing to the customer. Ask once more
+    // instead of falling back to "the manager will answer".
+    if (!nudged && message.stop_reason === "end_turn" && !textOf(message)) {
+      nudged = true;
+      runner.pushMessages(
+        ...(message.content.length ? [{ role: "assistant" as const, content: message.content }] : []),
+        { role: "user", content: "(You ended without a message to the customer. Write your reply to the customer now.)" },
+      );
+    }
   }
 
-  const text = (final?.content ?? [])
-    .filter((b): b is Anthropic.Beta.BetaTextBlock => b.type === "text")
-    .map((b) => b.text)
-    .join("\n")
-    .trim();
+  const text = textOf(final);
   if (final && final.stop_reason !== "refusal" && text) return text;
 
   // Declined by a safety filter, or the bot ended without writing anything:

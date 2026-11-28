@@ -1,12 +1,17 @@
 import { db, now } from "../db.js";
 
 export type Direction = "in" | "out" | "manual";
+/** "handoff": the bot called a manager; "manager": a manager took the chat over. */
+export type PauseReason = "handoff" | "manager";
 
 export interface ChatRow {
   chat_id: string;
   name: string | null;
   paused: number;
   history_from: string | null;
+  paused_reason: PauseReason | null;
+  paused_at: string | null;
+  handoff_at: string | null;
   created_at: string;
   last_message_at: string | null;
 }
@@ -41,8 +46,38 @@ export function getChat(chatId: string): ChatRow | undefined {
   return db.prepare("SELECT * FROM chats WHERE chat_id = ?").get(chatId) as ChatRow | undefined;
 }
 
-export function setPaused(chatId: string, paused: boolean): void {
-  db.prepare("UPDATE chats SET paused = ? WHERE chat_id = ?").run(paused ? 1 : 0, chatId);
+export function setPaused(chatId: string, paused: boolean, reason: PauseReason = "manager"): void {
+  db.prepare("UPDATE chats SET paused = ?, paused_reason = ?, paused_at = ? WHERE chat_id = ?").run(
+    paused ? 1 : 0,
+    paused ? reason : null,
+    paused ? now() : null,
+    chatId,
+  );
+}
+
+export function markHandoff(chatId: string): void {
+  db.prepare("UPDATE chats SET handoff_at = ? WHERE chat_id = ?").run(now(), chatId);
+}
+
+/** Whether a manager has written in this chat (panel or phone) since `since`. */
+export function managerWroteSince(chatId: string, since: string): boolean {
+  return Boolean(
+    db
+      .prepare("SELECT 1 FROM messages WHERE chat_id = ? AND direction = 'manual' AND created_at > ? LIMIT 1")
+      .get(chatId, since),
+  );
+}
+
+/** Chats whose latest message (since a history reset) is from the customer and arrived after `since`. */
+export function unansweredChats(since: string): { chat_id: string; name: string | null; last_id: number; last_at: string }[] {
+  return db
+    .prepare(
+      `SELECT c.chat_id, c.name, m.id AS last_id, m.created_at AS last_at
+       FROM chats c
+       JOIN messages m ON m.id = (SELECT MAX(id) FROM messages WHERE chat_id = c.chat_id)
+       WHERE m.direction = 'in' AND m.created_at > ? AND m.created_at >= COALESCE(c.history_from, '')`,
+    )
+    .all(since) as { chat_id: string; name: string | null; last_id: number; last_at: string }[];
 }
 
 /** Start the bot's memory over for this chat (the message log is kept). */

@@ -8,7 +8,8 @@ services:
       WHATSAPP_DEFAULT_ENGINE: NOWEB
       WAHA_API_KEY: ${WAHA_API_KEY:-}
       WHATSAPP_HOOK_URL: http://bot:3000/webhooks/waha
-      WHATSAPP_HOOK_EVENTS: message
+      # message.any also brings messages a manager sends from the phone, so the bot knows to stay quiet
+      WHATSAPP_HOOK_EVENTS: message,message.any
     volumes:
       - ./waha-sessions:/app/.sessions   # keeps the WhatsApp login across restarts
     restart: unless-stopped

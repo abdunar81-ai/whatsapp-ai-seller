@@ -2,13 +2,21 @@ import makeWASocket, {
   DisconnectReason,
   downloadMediaMessage,
   fetchLatestBaileysVersion,
+  normalizeMessageContent,
   useMultiFileAuthState,
   type WASocket,
 } from "baileys";
 import { rm } from "node:fs/promises";
 import QRCode from "qrcode";
 import pino from "pino";
-import type { MessageHandler, WhatsAppClient, WhatsAppStatus } from "./types.js";
+import {
+  canReadAttachment,
+  mediaPlaceholder,
+  type Download,
+  type MessageHandler,
+  type WhatsAppClient,
+  type WhatsAppStatus,
+} from "./types.js";
 
 /**
  * Runs WhatsApp Web inside this Node process. The QR code is shown in the
@@ -70,29 +78,44 @@ export class BaileysClient implements WhatsAppClient {
       if (type !== "notify") return;
       for (const m of messages) {
         const chatId = m.key.remoteJid;
-        if (!chatId || m.key.fromMe) continue;
+        if (!chatId) continue;
         if (chatId.endsWith("@g.us") || chatId.endsWith("@broadcast") || chatId.endsWith("@newsletter")) continue;
+        const fromMe = Boolean(m.key.fromMe);
 
-        const text =
-          m.message?.conversation ??
-          m.message?.extendedTextMessage?.text ??
-          m.message?.imageMessage?.caption ??
-          m.message?.videoMessage?.caption;
-        const audio = m.message?.audioMessage;
-        if (!text && !audio) continue;
+        // Disappearing, view-once and edited messages wrap the real content.
+        const content = normalizeMessageContent(m.message);
+        const caption =
+          content?.conversation ??
+          content?.extendedTextMessage?.text ??
+          content?.imageMessage?.caption ??
+          content?.videoMessage?.caption ??
+          content?.documentMessage?.caption ??
+          "";
+        const audio = content?.audioMessage;
+        const file = content?.imageMessage ?? content?.documentMessage ?? content?.stickerMessage ?? content?.videoMessage;
+        if (!caption && !audio && !file) continue; // reactions, locations, etc.
+
+        const download = (mimetype: string): Download => async () => ({
+          data: (await downloadMediaMessage(m, "buffer", {})) as Buffer,
+          mimetype,
+        });
+        const mimetype = content?.stickerMessage ? "image/webp" : (file?.mimetype ?? undefined);
+        const readable = Boolean(file && !content?.stickerMessage && canReadAttachment(mimetype ?? undefined));
+        const text = audio ? "" : file && !readable ? [mediaPlaceholder(mimetype), caption].filter(Boolean).join(" ") : caption;
+
+        if (fromMe) {
+          await this.onMessage?.({ chatId, text, fromMe }).catch((err) => console.error("[baileys] handler error", err));
+          continue;
+        }
 
         try {
           await sock.readMessages([m.key]);
           await this.onMessage?.({
             chatId,
-            text: text ?? "",
+            text,
             senderName: m.pushName ?? undefined,
-            voice: audio
-              ? async () => ({
-                  data: (await downloadMediaMessage(m, "buffer", {})) as Buffer,
-                  mimetype: audio.mimetype ?? "audio/ogg",
-                })
-              : undefined,
+            voice: audio ? download(audio.mimetype ?? "audio/ogg") : undefined,
+            attachment: readable ? download(mimetype!) : undefined,
           });
         } catch (err) {
           console.error("[baileys] handler error", err);

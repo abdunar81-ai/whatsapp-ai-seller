@@ -69,5 +69,21 @@ CREATE TABLE IF NOT EXISTS settings (
 // Columns added after the first release.
 const messageCols = (db.prepare("PRAGMA table_info(messages)").all() as { name: string }[]).map((c) => c.name);
 if (!messageCols.includes("raw_text")) db.exec("ALTER TABLE messages ADD COLUMN raw_text TEXT");
+const chatCols = (db.prepare("PRAGMA table_info(chats)").all() as { name: string }[]).map((c) => c.name);
+// Why and since when the bot is paused ('handoff' = the bot called a manager, 'manager' = a manager took over),
+// and when the bot last handed the chat to a manager.
+if (!chatCols.includes("paused_at")) db.exec("ALTER TABLE chats ADD COLUMN paused_at TEXT");
+if (!chatCols.includes("handoff_at")) db.exec("ALTER TABLE chats ADD COLUMN handoff_at TEXT");
+if (!chatCols.includes("paused_reason")) {
+  db.exec("ALTER TABLE chats ADD COLUMN paused_reason TEXT");
+  // Chats the bot paused itself before this column existed: handed over, and no manager has written since.
+  const t = new Date().toISOString();
+  db.prepare(
+    `UPDATE chats SET paused_reason = 'handoff', paused_at = ?, handoff_at = ?
+     WHERE paused = 1
+       AND chat_id IN (SELECT chat_id FROM leads WHERE stage = 'handed_over')
+       AND NOT EXISTS (SELECT 1 FROM messages m WHERE m.chat_id = chats.chat_id AND m.direction = 'manual')`,
+  ).run(t, t);
+}
 
 export const now = () => new Date().toISOString();

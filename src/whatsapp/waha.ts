@@ -1,5 +1,15 @@
 import type { Express, Request, Response } from "express";
-import type { ConnectionStatus, MessageHandler, WhatsAppClient, WhatsAppStatus } from "./types.js";
+import {
+  canReadAttachment,
+  mediaPlaceholder,
+  type ConnectionStatus,
+  type MessageHandler,
+  type WhatsAppClient,
+  type WhatsAppStatus,
+} from "./types.js";
+
+// WAHA should answer within seconds; a hung request must not block a chat forever.
+const WAHA_TIMEOUT_MS = 30_000;
 
 /**
  * Talks to a WAHA container (https://waha.devlike.pro). WAHA holds the
@@ -19,18 +29,31 @@ export class WahaClient implements WhatsAppClient {
       // Ack immediately; WAHA retries slow webhooks.
       res.sendStatus(200);
       const { event, payload } = req.body ?? {};
-      if (event !== "message" || !payload || payload.fromMe) return;
-      const chatId: string = payload.from;
-      if (!chatId || chatId.endsWith("@g.us") || chatId === "status@broadcast") return;
-      const text: string = payload.body ?? "";
-      const media = payload.media as { url?: string; mimetype?: string; error?: unknown } | undefined;
-      const isAudio = Boolean(payload.hasMedia && media?.mimetype?.startsWith("audio/"));
-      if (!text && !isAudio) return; // stickers, images without caption, etc.
+      if (!payload) return;
+      // "message" brings customers' messages; "message.any" also brings the store's own ones
+      // (a manager answering from the phone), which are the only ones taken from it.
+      if (event === "message" ? payload.fromMe : event !== "message.any" || !payload.fromMe) return;
+      const chatId: string = payload.fromMe ? payload.to : payload.from;
+      if (!chatId || chatId.endsWith("@g.us") || chatId.endsWith("@broadcast") || chatId.endsWith("@newsletter")) return;
+      const caption: string = payload.body ?? "";
+      const media = payload.media as { url?: string; mimetype?: string; error?: unknown } | undefined | null;
+      const mimetype = media?.mimetype;
+      const isAudio = Boolean(payload.hasMedia && mimetype?.startsWith("audio/"));
+      const readable = Boolean(payload.hasMedia && media?.url && canReadAttachment(mimetype));
+      if (!caption && !payload.hasMedia) return; // reactions, locations, etc.
+      // Photos the AI can read keep their caption; other media is noted so the bot still answers.
+      const text = isAudio
+        ? ""
+        : payload.hasMedia && !readable
+          ? [mediaPlaceholder(mimetype), caption].filter(Boolean).join(" ")
+          : caption;
       onMessage({
         chatId,
-        text: isAudio ? "" : text,
+        text,
+        fromMe: Boolean(payload.fromMe),
         senderName: payload._data?.notifyName ?? payload._data?.pushName,
-        voice: isAudio ? () => this.download(media!) : undefined,
+        voice: isAudio && !payload.fromMe ? () => this.download(media!) : undefined,
+        attachment: readable && !payload.fromMe ? () => this.download(media!) : undefined,
       }).catch((err) => console.error("[waha] handler error", err));
     });
     console.log(`[waha] webhook ready at /webhooks/waha (session "${this.session}")`);
@@ -42,9 +65,10 @@ export class WahaClient implements WhatsAppClient {
     const u = new URL(media.url);
     const res = await fetch(`${this.baseUrl}${u.pathname}${u.search}`, {
       headers: this.apiKey ? { "X-Api-Key": this.apiKey } : {},
+      signal: AbortSignal.timeout(120_000),
     });
     if (!res.ok) throw new Error(`WAHA file download failed: ${res.status}`);
-    return { data: Buffer.from(await res.arrayBuffer()), mimetype: media.mimetype ?? "audio/ogg" };
+    return { data: Buffer.from(await res.arrayBuffer()), mimetype: media.mimetype ?? "application/octet-stream" };
   }
 
   async ownChatId(): Promise<string | undefined> {
@@ -61,6 +85,7 @@ export class WahaClient implements WhatsAppClient {
         ...(this.apiKey ? { "X-Api-Key": this.apiKey } : {}),
       },
       body: body !== undefined ? JSON.stringify(body) : undefined,
+      signal: AbortSignal.timeout(WAHA_TIMEOUT_MS),
     });
   }
 
